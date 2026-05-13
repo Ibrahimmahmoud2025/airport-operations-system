@@ -472,6 +472,20 @@ function setAuthGateLocked(locked){
   if(gate) gate.setAttribute('aria-hidden', locked ? 'false' : 'true');
 }
 
+/** Keeps `<html data-auth-hydrate>` aligned with `sessionStorage` (`airportOpsSessionUserId`). */
+function syncDocumentAuthHydrate(){
+  try{
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    const sid = raw != null && raw !== '' ? parseInt(raw, 10) : NaN;
+    document.documentElement.setAttribute(
+      'data-auth-hydrate',
+      Number.isFinite(sid) ? 'authenticated' : 'guest'
+    );
+  } catch(e){
+    document.documentElement.setAttribute('data-auth-hydrate', 'guest');
+  }
+}
+
 function applyRoleToUi(){
   const role = currentUser ? currentUser.role : '';
   document.body.setAttribute('data-user-role', role || '');
@@ -581,7 +595,7 @@ function performLogin(){
     };
     clearAuthForm();
     clearAuthInlineError();
-    startLoggedInApp();
+    startLoggedInApp({ fromLogin: true });
   } finally {
     setAuthSubmitBusy(false);
   }
@@ -597,6 +611,7 @@ function submitAuthLogin(ev){
 
 function logout(){
   sessionStorage.removeItem(SESSION_KEY);
+  syncDocumentAuthHydrate();
   currentUser = null;
   appShellWired = false;
   clearOrderHash();
@@ -4658,8 +4673,17 @@ function wireAppShellOnce(){
   });
 }
 
-function startLoggedInApp(){
+function startLoggedInApp(opts){
   if(!currentUser) return;
+  const fromLogin = !!(opts && opts.fromLogin);
+
+  syncDocumentAuthHydrate();
+
+  if(fromLogin){
+    const base = window.location.href.split('#')[0];
+    history.replaceState(null, '', base);
+  }
+
   const showEnterSkeleton = document.documentElement.getAttribute('data-auth-ready') === 'yes';
   if(showEnterSkeleton) showRouteLoader();
   setAuthGateLocked(false);
@@ -4673,6 +4697,9 @@ function startLoggedInApp(){
   const tdl = document.getElementById('today-date-label');
   if(tdl) tdl.textContent = fmtDate(todayStr());
   wireAppShellOnce();
+  if(fromLogin){
+    toast(`Signed in successfully — welcome, ${currentUser.displayName}.`, 'ok');
+  }
   if(showEnterSkeleton) scheduleRouteLoaderHide();
 }
 
@@ -4753,6 +4780,7 @@ function init(){
   } else {
     setAuthGateLocked(true);
     applyRoleToUi();
+    syncDocumentAuthHydrate();
     const userEl = document.getElementById('auth-username');
     if(userEl) queueMicrotask(() => { try{ userEl.focus(); }catch(e){} });
   }
