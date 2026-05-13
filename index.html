@@ -46,7 +46,11 @@
     <form id="auth-form" autocomplete="username">
       <div class="fg">
         <label for="auth-username">Username</label>
-        <input type="text" id="auth-username" name="username" required autocapitalize="none" spellcheck="false" autocomplete="username" placeholder="e.g. john.smith">
+        <div class="auth-username-row">
+          <input type="text" id="auth-username" name="username" required autocapitalize="none" spellcheck="false" autocomplete="username" placeholder="e.g. john.smith">
+          <button type="button" class="btn btn-ghost btn-sm auth-copy-user-btn" id="auth-copy-username" onclick="copyAuthLoginUsername()">Copy</button>
+        </div>
+        <p class="auth-username-hint">Use the same login as in <strong>Users</strong>: lowercase <strong>a–z</strong>, <strong>0–9</strong>, and <strong>.</strong> <strong>_</strong> <strong>-</strong> only (max 64). Spaces and symbols are removed automatically.</p>
       </div>
       <div class="fg">
         <label for="auth-password">Password</label>
@@ -1054,11 +1058,21 @@
       <button type="button" class="modal-close" onclick="closeModal('user-overlay')">✕</button>
     </div>
     <div class="modal-body">
-      <div class="form-grid g2">
-        <div class="fg"><label for="u-username">Username *</label><input type="text" id="u-username" placeholder="e.g. john.smith (letters, numbers, . _ -)" autocapitalize="none" spellcheck="false" autocomplete="off"></div>
-        <div class="fg"><label for="u-display">Display name *</label><input type="text" id="u-display" placeholder="Shown in toolbar"></div>
+      <div class="fg">
+        <label for="u-username">Username *</label>
+        <input type="text" id="u-username" placeholder="Type a name — it will be normalized below" autocapitalize="none" spellcheck="false" autocomplete="off">
+        <p class="modal-field-hint">Allowed in the saved login: lowercase <strong>a–z</strong>, <strong>0–9</strong>, and <strong>.</strong> <strong>_</strong> <strong>-</strong> only (max 64). Everything else is removed.</p>
+      </div>
+      <div class="fg">
+        <label for="u-login-username-preview">Login username (saved)</label>
+        <div class="user-login-preview-row">
+          <input type="text" id="u-login-username-preview" readonly tabindex="0" aria-readonly="true" class="user-login-preview-input" value="" placeholder="—">
+          <button type="button" class="btn btn-ghost btn-sm" id="u-copy-login-username" onclick="copyUserModalLoginUsername()">Copy</button>
+        </div>
+        <p class="modal-field-hint">This is exactly what people type at sign-in (after normalization).</p>
       </div>
       <div class="form-grid g2">
+        <div class="fg"><label for="u-display">Display name *</label><input type="text" id="u-display" placeholder="Shown in toolbar"></div>
         <div class="fg">
           <label for="u-role">Role *</label>
           <select id="u-role" onchange="syncUserFormLeaderField()">
@@ -1067,7 +1081,9 @@
             <option value="leader">Tour leader</option>
           </select>
         </div>
-        <div class="fg" id="u-leader-wrap">
+      </div>
+      <div class="form-grid g2">
+        <div class="fg" id="u-leader-wrap" style="grid-column:1/-1">
           <label for="u-leader">Linked tour leader *</label>
           <select id="u-leader"></select>
         </div>

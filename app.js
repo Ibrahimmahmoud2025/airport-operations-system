@@ -568,18 +568,99 @@ function showAuthInlineError(msg){
   toast(msg, 'err');
 }
 
+function copyTextToClipboard(text, successToast){
+  const str = String(text || '').trim();
+  if(!str){
+    toast('Nothing to copy', 'err');
+    return Promise.resolve();
+  }
+  const done = ()=>{ if(successToast) toast(successToast, 'ok'); };
+  if(navigator.clipboard && typeof navigator.clipboard.writeText === 'function'){
+    return navigator.clipboard.writeText(str).then(done).catch(()=>{
+      if(fallbackCopyTextToClipboard(str)) done();
+      else toast('Could not copy — select the field and copy manually.', 'err');
+    });
+  }
+  if(fallbackCopyTextToClipboard(str)) done();
+  else toast('Could not copy — select the field and copy manually.', 'err');
+  return Promise.resolve();
+}
+
+function fallbackCopyTextToClipboard(text){
+  try{
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch(e){
+    return false;
+  }
+}
+
+function copyAuthLoginUsername(){
+  const el = document.getElementById('auth-username');
+  const norm = normalizeUsername(el && el.value);
+  if(!norm){
+    toast('Enter a username first (or create a user to fill this field).', 'err');
+    return;
+  }
+  copyTextToClipboard(norm, 'Login username copied');
+}
+
+function copyUserModalLoginUsername(){
+  const el = document.getElementById('u-login-username-preview');
+  const raw = el && el.value;
+  const norm = normalizeUsername(raw);
+  if(!norm){
+    toast('No login username to copy yet — type in Username first.', 'err');
+    return;
+  }
+  copyTextToClipboard(norm, 'Login username copied');
+}
+
+function updateUserLoginUsernamePreview(){
+  const input = document.getElementById('u-username');
+  const prev = document.getElementById('u-login-username-preview');
+  const copyBtn = document.getElementById('u-copy-login-username');
+  if(!prev) return;
+  const raw = input ? input.value : '';
+  const norm = normalizeUsername(raw);
+  prev.value = norm;
+  if(copyBtn) copyBtn.disabled = !norm;
+}
+
+function wireUserLoginUsernamePreview(){
+  const el = document.getElementById('u-username');
+  if(!el || el.dataset.previewBound === '1') return;
+  el.dataset.previewBound = '1';
+  el.addEventListener('input', updateUserLoginUsernamePreview);
+  el.addEventListener('change', updateUserLoginUsernamePreview);
+}
+
 function performLogin(){
   clearAuthInlineError();
   const userEl = document.getElementById('auth-username');
   const passEl = document.getElementById('auth-password');
-  const username = normalizeUsername(userEl && userEl.value);
+  const rawLogin = userEl ? userEl.value : '';
+  const username = normalizeUsername(rawLogin);
   const password = passEl ? passEl.value : '';
-  console.log('[AirportOps] username/password values read', { username: username || '(empty)', passwordLen: password.length });
+  console.log('[UserAuth] login input', { rawUsername: rawLogin, normalizedLookupUsername: username, passwordLen: password.length });
   if(!username || !password){
     showAuthInlineError('Enter username and password.');
     return;
   }
   const u = db.users.find(x => x.username === username);
+  console.log('[UserAuth] login lookup', {
+    normalizedLookupUsername: username,
+    matchedStoredUsername: u ? u.username : null,
+    matchedUserId: u ? u.id : null,
+  });
   if(!u){
     showAuthInlineError('Unknown username. Use the same login name as in Users (letters, numbers, . _ - only).');
     return;
@@ -603,6 +684,7 @@ function performLogin(){
   setAuthSubmitBusy(true);
   try{
     sessionStorage.setItem(SESSION_KEY, String(u.id));
+    console.log('[UserAuth] login success', { storedUsername: u.username, userId: u.id });
     currentUser = {
       id: u.id,
       username: u.username,
@@ -684,6 +766,7 @@ function openUserModal(){
   document.getElementById('user-modal-title').textContent = '👤 Add user';
   document.getElementById('u-username').readOnly = false;
   openModal('user-overlay');
+  updateUserLoginUsernamePreview();
 }
 
 function editUser(id){
@@ -703,6 +786,7 @@ function editUser(id){
   syncUserFormLeaderField();
   document.getElementById('user-modal-title').textContent = '✏️ Edit user';
   openModal('user-overlay');
+  updateUserLoginUsernamePreview();
 }
 
 function saveUser(){
@@ -749,6 +833,7 @@ function saveUser(){
   } else {
     const rawUsername = document.getElementById('u-username').value;
     const username = normalizeUsername(rawUsername);
+    console.log('[UserAuth] create user (before save)', { rawUsername, normalizedUsername: username });
     if(!username){
       toast('Username must use letters, numbers, dots, underscores, or hyphens only (e.g. john.smith).', 'err');
       return;
@@ -768,11 +853,41 @@ function saveUser(){
       createdAt: new Date().toISOString(),
     };
     db.users.push(nu);
-    const authUserEl = document.getElementById('auth-username');
-    if(authUserEl) authUserEl.value = username;
-    toast(`User created — sign in as "${username}" with the password you set.`, 'ok');
   }
   save();
+  if(editingUserId === null){
+    const rawAfter = document.getElementById('u-username')?.value;
+    const usernameAfter = normalizeUsername(rawAfter);
+    let persistedUser = null;
+    let usersInLs = 0;
+    try{
+      const parsed = JSON.parse(localStorage.getItem(DB_KEY) || '{}');
+      const arr = Array.isArray(parsed.users) ? parsed.users : [];
+      usersInLs = arr.length;
+      persistedUser = usernameAfter ? (arr.find(x => x && x.username === usernameAfter) || null) : null;
+    } catch(e){
+      console.warn('[UserAuth] localStorage verify failed', e);
+    }
+    const memUser = usernameAfter ? db.users.find(x => x.username === usernameAfter) : null;
+    console.log('[UserAuth] new user (after save)', {
+      rawUsername: rawAfter,
+      normalizedUsername: usernameAfter,
+      storedUsernameInMemory: memUser && memUser.username,
+      persistedInLocalStorage: !!persistedUser,
+      persistedUsername: persistedUser && persistedUser.username,
+      usersCountInLocalStorage: usersInLs,
+    });
+    if(usernameAfter){
+      const authUserEl = document.getElementById('auth-username');
+      if(authUserEl) authUserEl.value = usernameAfter;
+      console.log('[UserAuth] auth form filled', { loginFormUsername: usernameAfter });
+    }
+    if(usernameAfter && persistedUser){
+      toast(`User created — sign in as "${usernameAfter}" with the password you set.`, 'ok');
+    } else if(usernameAfter && !persistedUser){
+      toast('User was not found in storage after save. Try again or export a backup.', 'err');
+    }
+  }
   closeModal('user-overlay');
   renderUsers(false);
 }
@@ -4796,6 +4911,7 @@ function wireAuthForm(){
 function init(){
   console.log('[AirportOps] init started');
   wireAuthForm();
+  wireUserLoginUsernamePreview();
   initModalAccessibility();
   syncThemeToggleUi();
   if(tryRestoreSession()){

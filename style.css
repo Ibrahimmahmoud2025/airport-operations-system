@@ -98,6 +98,11 @@ html[data-auth-hydrate="guest"]:not([data-auth-ready="yes"]) .auth-gate{
 .auth-hint{font-size:11px;color:var(--muted2);margin-top:14px;line-height:1.45;}
 #auth-form[aria-busy="true"] #auth-submit{cursor:wait;opacity:.88;}
 
+.auth-username-row{display:flex;gap:8px;align-items:stretch;}
+.auth-username-row input{flex:1;min-width:0;}
+.auth-copy-user-btn{flex-shrink:0;white-space:nowrap;align-self:stretch;}
+.auth-username-hint{font-size:11px;color:var(--muted2);margin:8px 0 0;line-height:1.45;}
+
 .auth-inline-error{
   display:none;margin:0 0 12px;padding:10px 12px;border-radius:8px;
   font-size:12px;font-weight:600;line-height:1.45;
@@ -1403,6 +1408,12 @@ select.filter-sel option{background:var(--s1);}
 }
 .modal-close:hover{background:var(--red);color:#fff;border-color:var(--red);}
 .modal-body{padding:18px 22px;}
+.modal-field-hint{font-size:11px;color:var(--muted2);margin:6px 0 0;line-height:1.45;}
+.user-login-preview-row{display:flex;gap:8px;align-items:stretch;}
+.user-login-preview-input{
+  flex:1;min-width:0;font-family:var(--mono);font-size:12px;font-weight:600;
+  background:var(--s3);color:var(--text);cursor:default;border:1px solid var(--border2);
+}
 .modal-foot{
   padding:14px 22px;border-top:1px solid var(--border);
   display:flex;flex-direction:row;
