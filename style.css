@@ -98,6 +98,13 @@ html[data-auth-hydrate="guest"]:not([data-auth-ready="yes"]) .auth-gate{
 .auth-hint{font-size:11px;color:var(--muted2);margin-top:14px;line-height:1.45;}
 #auth-form[aria-busy="true"] #auth-submit{cursor:wait;opacity:.88;}
 
+.auth-inline-error{
+  display:none;margin:0 0 12px;padding:10px 12px;border-radius:8px;
+  font-size:12px;font-weight:600;line-height:1.45;
+  color:#fecaca;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.35);
+}
+.auth-inline-error:not(:empty){display:block;}
+
 /* ══ Boot + route loading (session restore, navigation) ══ */
 .app-boot-overlay{
   position:fixed;inset:0;z-index:10025;
@@ -2127,7 +2134,7 @@ select.filter-sel option{background:var(--s1);}
 
 /* toast */
 #toasts{
-  position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:999;
+  position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:10050;
   display:flex;flex-direction:column;gap:8px;align-items:stretch;width:min(440px,94vw);
 }
 .toast{

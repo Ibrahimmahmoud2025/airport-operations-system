@@ -1,6 +1,7 @@
 // ═══════════════════════════════════════
 // DATA LAYER
 // ═══════════════════════════════════════
+console.log('[AirportOps] app.js loaded');
 const DB_KEY = 'airportOpsV2';
 const SESSION_KEY = 'airportOpsSessionUserId';
 let db = load();
@@ -523,27 +524,39 @@ function clearAuthForm(){
   if(p) p.value = '';
 }
 
-function submitAuthLogin(ev){
-  ev.preventDefault();
+function clearAuthInlineError(){
+  const el = document.getElementById('auth-inline-error');
+  if(el) el.textContent = '';
+}
+
+function showAuthInlineError(msg){
+  const el = document.getElementById('auth-inline-error');
+  if(el) el.textContent = msg;
+  toast(msg, 'err');
+}
+
+function performLogin(){
+  clearAuthInlineError();
   const userEl = document.getElementById('auth-username');
   const passEl = document.getElementById('auth-password');
   const username = (userEl && userEl.value || '').trim().toLowerCase();
   const password = passEl ? passEl.value : '';
+  console.log('[AirportOps] username/password values read', { username: username || '(empty)', passwordLen: password.length });
   if(!username || !password){
-    toast('Enter username and password', 'err');
+    showAuthInlineError('Enter username and password.');
     return;
   }
   const u = db.users.find(x => x.username === username && x.active !== false);
   if(!u || !u.salt || !u.passwordHash){
-    toast('Unknown username or inactive account', 'err');
+    showAuthInlineError('Unknown username or inactive account.');
     return;
   }
   if(simplePwdHash(password, u.salt) !== u.passwordHash){
-    toast('Incorrect password', 'err');
+    showAuthInlineError('Incorrect password. Try again.');
     return;
   }
   if(u.role === 'leader' && (u.leaderId == null || !db.leaders.some(l => l.id === u.leaderId))){
-    toast('This tour leader login is not linked to a roster profile. Ask an admin.', 'err');
+    showAuthInlineError('This tour leader login is not linked to a roster profile. Ask an admin.');
     return;
   }
   setAuthSubmitBusy(true);
@@ -557,10 +570,19 @@ function submitAuthLogin(ev){
       leaderId: u.leaderId != null ? u.leaderId : null,
     };
     clearAuthForm();
+    clearAuthInlineError();
     startLoggedInApp();
   } finally {
     setAuthSubmitBusy(false);
   }
+}
+
+function submitAuthLogin(ev){
+  if(ev && typeof ev.preventDefault === 'function'){
+    ev.preventDefault();
+  }
+  console.log('[AirportOps] login submit triggered');
+  performLogin();
 }
 
 function logout(){
@@ -4674,13 +4696,45 @@ function seedSampleData(){
 }
 
 function wireAuthForm(){
+  console.log('[AirportOps] wireAuthForm()');
   const form = document.getElementById('auth-form');
-  if(!form || form.dataset.bound === '1') return;
+  if(!form){
+    console.warn('[AirportOps] auth form NOT found (#auth-form)');
+    return;
+  }
+  console.log('[AirportOps] auth form found');
+  if(form.dataset.bound === '1'){
+    console.log('[AirportOps] auth form already bound; skipping');
+    return;
+  }
   form.dataset.bound = '1';
-  form.addEventListener('submit', submitAuthLogin);
+
+  form.addEventListener('submit', function onAuthSubmit(ev){
+    console.log('[AirportOps] form submit event');
+    submitAuthLogin(ev);
+  });
+
+  const btn = document.getElementById('auth-submit');
+  if(btn){
+    btn.addEventListener('click', function onAuthButtonClick(ev){
+      ev.preventDefault();
+      console.log('[AirportOps] login button click → requestSubmit');
+      try{
+        if(typeof form.requestSubmit === 'function'){
+          form.requestSubmit(btn);
+        } else {
+          submitAuthLogin({ preventDefault(){}, stopPropagation(){} });
+        }
+      } catch(err){
+        console.warn('[AirportOps] requestSubmit failed; using direct login', err);
+        submitAuthLogin({ preventDefault(){}, stopPropagation(){} });
+      }
+    });
+  }
 }
 
 function init(){
+  console.log('[AirportOps] init started');
   wireAuthForm();
   initModalAccessibility();
   syncThemeToggleUi();
