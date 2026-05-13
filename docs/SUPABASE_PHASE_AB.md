@@ -90,6 +90,14 @@ When `DATA_SOURCE=remote` and the browser has Supabase configured, creating a us
 
 **Edit / activate:** **`POST /api/update-user`** (same env and admin check) updates `profiles` and Auth metadata/password for users that have a **`supabaseUserId`** link. Rows without that link remain local-only.
 
+### Workspace data (leaders, services, orders)
+
+When `DATA_SOURCE=remote` and Supabase is configured, **`save()`** schedules a debounced **push** of leaders, services, and orders (and expense lines) to Postgres using the **anon key + your session** (RLS). **Tour leaders** only push orders assigned to them. **Coordinators** push the full roster and catalogue.
+
+On **sign-in**, the app **pulls** remote rows and merges them into `localStorage` (keeps local file attachments on orders when merging).
+
+Run migration **`20260213120500_rls_leader_order_writes.sql`** so tour leaders can **update** their assigned orders and **manage expenses** on those orders from the app.
+
 If `public.leaders` has no row for the chosen **legacy** leader id, the Auth user is still created but `profiles.leader_id` may stay null until leaders are synced to Postgres; the UI shows an informational toast in that case.
 
 ## 9. Testing checklist
@@ -100,6 +108,7 @@ If `public.leaders` has no row for the chosen **legacy** leader id, the Auth use
 4. **Logout:** clears Supabase session and `logisticsRemoteAuth` session flag.
 5. **Remote “Add user”:** set Vercel env vars for the API; sign in as admin (remote); add user with password; confirm row in **Authentication → Users** and **profiles**; confirm Users table refreshes.
 6. **Remote edit user:** change display name or role for a user with `supabaseUserId`; confirm **Table editor → profiles** (and Auth metadata) updates.
+7. **Workspace sync:** run migration `20260213120500_rls_leader_order_writes.sql`; edit an order as coordinator, wait ~1s, confirm row in **orders** / **order_expenses**; sign in as tour leader, edit assigned order, confirm update persists.
 
 ## 10. Security notes
 

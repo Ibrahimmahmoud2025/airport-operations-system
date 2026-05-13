@@ -583,6 +583,11 @@ function ensureOrderFields(o){
   if(!Array.isArray(o.expenses)) o.expenses = [];
   else o.expenses = o.expenses.map((ex, i) => normalizeExpenseLine(ex, i + 1)).filter(Boolean);
   if(!o.createdAt) o.createdAt = new Date().toISOString();
+  if(o.supabaseOrderId != null && String(o.supabaseOrderId).trim()){
+    o.supabaseOrderId = String(o.supabaseOrderId).trim();
+  } else {
+    delete o.supabaseOrderId;
+  }
   return o;
 }
 
@@ -689,6 +694,335 @@ function save(){
     } else {
       toast('Could not save: ' + (e && e.message ? e.message : 'unknown error'), 'err');
     }
+  }
+  if(supabaseClientReady() && currentUser){
+    scheduleDebouncedRemotePush();
+  }
+}
+
+// ═══ Remote workspace sync (Supabase ↔ localStorage) when DATA_SOURCE=remote ═══
+let _remotePushTimer = null;
+const remoteLeaderUuidByLegacyId = new Map();
+const remoteLegacyIdByLeaderUuid = new Map();
+const remoteServiceUuidByLegacyId = new Map();
+const remoteOrderUuidByLegacyId = new Map();
+
+async function refreshRemoteUuidMaps(){
+  if(!supabaseClientReady()) return;
+  const sb = getSupabase();
+  remoteLeaderUuidByLegacyId.clear();
+  remoteLegacyIdByLeaderUuid.clear();
+  remoteServiceUuidByLegacyId.clear();
+  remoteOrderUuidByLegacyId.clear();
+  const [{ data: lr }, { data: sr }, { data: or }] = await Promise.all([
+    sb.from('leaders').select('id, legacy_id'),
+    sb.from('services').select('id, legacy_id'),
+    sb.from('orders').select('id, legacy_id'),
+  ]);
+  (lr || []).forEach(r=>{
+    if(!r) return;
+    const leg = parseInt(r.legacy_id, 10);
+    if(Number.isFinite(leg)){
+      remoteLeaderUuidByLegacyId.set(leg, r.id);
+      remoteLegacyIdByLeaderUuid.set(r.id, leg);
+    }
+  });
+  (sr || []).forEach(r=>{
+    if(!r) return;
+    const leg = parseInt(r.legacy_id, 10);
+    if(Number.isFinite(leg)) remoteServiceUuidByLegacyId.set(leg, r.id);
+  });
+  (or || []).forEach(r=>{
+    if(!r) return;
+    const leg = parseInt(r.legacy_id, 10);
+    if(Number.isFinite(leg)) remoteOrderUuidByLegacyId.set(leg, r.id);
+  });
+}
+
+function scheduleDebouncedRemotePush(){
+  if(!supabaseClientReady() || !currentUser) return;
+  clearTimeout(_remotePushTimer);
+  _remotePushTimer = setTimeout(()=>{
+    _remotePushTimer = null;
+    void pushWorkspaceToSupabase().catch(err=>{
+      console.warn('[RemoteSync] push', err);
+      toast('Cloud sync failed: ' + (err && err.message ? err.message : 'error'), 'err');
+    });
+  }, 550);
+}
+
+async function deleteRemoteOrderByLegacyId(legacyId){
+  if(!supabaseClientReady()) return;
+  await refreshRemoteUuidMaps();
+  const oid = remoteOrderUuidByLegacyId.get(legacyId);
+  if(!oid) return;
+  const sb = getSupabase();
+  const { error } = await sb.from('orders').delete().eq('id', oid);
+  if(error) throw error;
+  remoteOrderUuidByLegacyId.delete(legacyId);
+}
+
+async function deleteRemoteLeaderByLegacyId(legacyId){
+  if(!supabaseClientReady()) return;
+  await refreshRemoteUuidMaps();
+  const sb = getSupabase();
+  const { error } = await sb.from('leaders').delete().eq('legacy_id', legacyId);
+  if(error) throw error;
+  remoteLeaderUuidByLegacyId.delete(legacyId);
+}
+
+async function deleteRemoteServiceByLegacyId(legacyId){
+  if(!supabaseClientReady()) return;
+  const sb = getSupabase();
+  const { error } = await sb.from('services').delete().eq('legacy_id', legacyId);
+  if(error) throw error;
+  remoteServiceUuidByLegacyId.delete(legacyId);
+}
+
+function remoteRowToLocalLeader(row){
+  const id = parseInt(row.legacy_id, 10);
+  if(!Number.isFinite(id) || id < 1) return null;
+  const l = {
+    id,
+    name: String(row.name || '').trim() || 'Guide',
+    phone: String(row.phone || '').trim(),
+    spec: String(row.spec || '').trim(),
+    status: ['Available', 'Busy', 'Off'].includes(row.status) ? row.status : 'Available',
+    notes: String(row.notes || '').trim(),
+    availabilityMode: row.availability_mode === 'manual' ? 'manual' : 'auto',
+  };
+  return ensureLeaderShape(l);
+}
+
+function remoteRowToLocalService(row){
+  return migrateService({
+    id: parseInt(row.legacy_id, 10),
+    name: row.name,
+    icon: row.icon,
+    color: row.color,
+    description: row.description,
+    airport: row.airport,
+    includes: row.includes,
+    cost: row.cost,
+    currency: row.currency,
+  });
+}
+
+function remoteRowToLocalOrder(row, expenseRows){
+  const id = parseInt(row.legacy_id, 10);
+  if(!Number.isFinite(id) || id < 1) return null;
+  const leaderLegacy = row.leader_id ? remoteLegacyIdByLeaderUuid.get(row.leader_id) : null;
+  const exList = (expenseRows || []).map((ex, i)=>{
+    return normalizeExpenseLine({
+      id: ex.legacy_line_id != null ? parseInt(ex.legacy_line_id, 10) : i + 1,
+      category: ex.category,
+      amount: ex.amount,
+      date: ex.expense_date,
+      notes: ex.notes,
+    }, i + 1);
+  }).filter(Boolean);
+
+  const o = {
+    id,
+    supabaseOrderId: row.id,
+    type: String(row.type_legacy || row.service_name_legacy || 'Arrival').trim() || 'Arrival',
+    flight: String(row.flight || '').trim(),
+    date: String(row.order_date || '').trim() || todayStr(),
+    time: String(row.order_time || '12:00').trim(),
+    flightType: String(row.flight_type || 'Arrival').trim() || 'Arrival',
+    dest: String(row.dest || '').trim(),
+    nationalityBreakdown: Array.isArray(row.nationality_breakdown) ? row.nationality_breakdown : [],
+    nat: String(row.nat_summary || '').trim(),
+    adults: parseInt(row.adults, 10) || 0,
+    children: parseInt(row.children, 10) || 0,
+    childAges: Array.isArray(row.child_ages) ? row.child_ages : [],
+    leaderId: Number.isFinite(leaderLegacy) ? leaderLegacy : null,
+    rep: String(row.rep || '').trim(),
+    vehicles: Array.isArray(row.vehicles) ? row.vehicles : [],
+    driver: String(row.driver_summary || '').trim(),
+    status: ['Scheduled', 'In progress', 'Completed', 'Cancelled'].includes(row.status) ? row.status : 'Scheduled',
+    ref: String(row.ref || '').trim(),
+    notes: String(row.notes || '').trim(),
+    files: [],
+    expenses: exList,
+    createdAt: row.created_at || new Date().toISOString(),
+  };
+  ensureOrderFields(o);
+  return o;
+}
+
+async function pullRemoteWorkspaceIntoLocalSilently(){
+  if(!supabaseClientReady() || !currentUser) return;
+  const sb = getSupabase();
+  await refreshRemoteUuidMaps();
+
+  const { data: lr, error: le } = await sb.from('leaders').select('*').order('legacy_id');
+  if(le) throw le;
+  for(const row of lr || []){
+    const shaped = remoteRowToLocalLeader(row);
+    if(!shaped) continue;
+    const ix = db.leaders.findIndex(l => l.id === shaped.id);
+    if(ix >= 0) Object.assign(db.leaders[ix], shaped);
+    else db.leaders.push(shaped);
+  }
+
+  const { data: sr, error: se } = await sb.from('services').select('*').order('legacy_id');
+  if(se) throw se;
+  for(const row of sr || []){
+    const shaped = remoteRowToLocalService(row);
+    if(!shaped || !shaped.id) continue;
+    const ix = db.services.findIndex(s => s.id === shaped.id);
+    if(ix >= 0) Object.assign(db.services[ix], shaped);
+    else db.services.push(shaped);
+  }
+
+  await refreshRemoteUuidMaps();
+
+  const { data: orows, error: oe } = await sb.from('orders').select('*').order('legacy_id');
+  if(oe) throw oe;
+  const orderIds = (orows || []).map(r => r.id).filter(Boolean);
+  const expensesByOrder = new Map();
+  if(orderIds.length){
+    const chunk = 80;
+    for(let i = 0; i < orderIds.length; i += chunk){
+      const slice = orderIds.slice(i, i + chunk);
+      const { data: exs, error: exErr } = await sb.from('order_expenses').select('*').in('order_id', slice);
+      if(exErr) throw exErr;
+      (exs || []).forEach(ex=>{
+        if(!ex || !ex.order_id) return;
+        if(!expensesByOrder.has(ex.order_id)) expensesByOrder.set(ex.order_id, []);
+        expensesByOrder.get(ex.order_id).push(ex);
+      });
+    }
+  }
+
+  for(const row of orows || []){
+    const exs = expensesByOrder.get(row.id) || [];
+    const shaped = remoteRowToLocalOrder(row, exs);
+    if(!shaped) continue;
+    const ix = db.orders.findIndex(o => o.id === shaped.id);
+    if(ix >= 0){
+      const keepFiles = Array.isArray(db.orders[ix].files) ? db.orders[ix].files : [];
+      Object.assign(db.orders[ix], shaped);
+      db.orders[ix].files = keepFiles.length ? keepFiles : (db.orders[ix].files || []);
+    } else {
+      db.orders.push(shaped);
+    }
+  }
+
+  recomputeNextIds(db);
+  try{
+    localStorage.setItem(DB_KEY, JSON.stringify(db));
+  } catch(e){
+    const name = e && e.name;
+    if(name === 'QuotaExceededError'){
+      toast('Browser storage is full. Export a backup, then remove old orders or clear site data for this app.', 'err');
+    } else {
+      console.warn('[RemoteSync] pull save', e);
+    }
+  }
+}
+
+async function syncSingleOrderToSupabase(sb, o){
+  ensureOrderFields(o);
+  const leaderUuid = o.leaderId ? remoteLeaderUuidByLegacyId.get(o.leaderId) : null;
+  const svc = db.services.find(s => s.name === o.type);
+  const serviceUuid = svc ? remoteServiceUuidByLegacyId.get(svc.id) : null;
+  const row = {
+    legacy_id: o.id,
+    service_id: serviceUuid || null,
+    service_name_legacy: o.type,
+    type_legacy: o.type,
+    flight: o.flight || '',
+    flight_type: o.flightType || 'Arrival',
+    order_date: o.date,
+    order_time: o.time || '12:00',
+    dest: o.dest || '',
+    adults: o.adults || 0,
+    children: o.children || 0,
+    child_ages: o.childAges || [],
+    nationality_breakdown: o.nationalityBreakdown || [],
+    nat_summary: o.nat || '',
+    vehicles: o.vehicles || [],
+    driver_summary: o.driver || '',
+    leader_id: leaderUuid || null,
+    rep: o.rep || '',
+    status: o.status,
+    ref: o.ref || '',
+    notes: o.notes || '',
+  };
+  const { data: ups, error } = await sb.from('orders').upsert(row, { onConflict: 'legacy_id' }).select('id');
+  if(error) throw error;
+  const newId = ups && ups[0] && ups[0].id;
+  if(newId){
+    o.supabaseOrderId = newId;
+    remoteOrderUuidByLegacyId.set(o.id, newId);
+  }
+  if(!o.supabaseOrderId) return;
+
+  const { error: delErr } = await sb.from('order_expenses').delete().eq('order_id', o.supabaseOrderId);
+  if(delErr) throw delErr;
+  for(const ex of o.expenses || []){
+    const er = {
+      order_id: o.supabaseOrderId,
+      legacy_line_id: ex.id,
+      category: ex.category || 'Other',
+      amount: ex.amount != null ? Number(ex.amount) : 0,
+      expense_date: ex.date || o.date || todayStr(),
+      notes: ex.notes || '',
+    };
+    const { error: insErr } = await sb.from('order_expenses').insert(er);
+    if(insErr) throw insErr;
+  }
+}
+
+async function pushWorkspaceToSupabase(){
+  if(!supabaseClientReady() || !currentUser) return;
+  const sb = getSupabase();
+  await refreshRemoteUuidMaps();
+  const staff = canManageLeadersAndServices();
+  const leaderOnly = isTourLeaderRole();
+  const myLeaderId = leaderOnly ? currentUser.leaderId : null;
+
+  if(staff){
+    for(const l of db.leaders){
+      const row = {
+        legacy_id: l.id,
+        name: l.name,
+        phone: l.phone || '',
+        spec: l.spec || '',
+        status: l.status,
+        notes: l.notes || '',
+        availability_mode: l.availabilityMode === 'manual' ? 'manual' : 'auto',
+      };
+      const { error } = await sb.from('leaders').upsert(row, { onConflict: 'legacy_id' });
+      if(error) throw error;
+    }
+    await refreshRemoteUuidMaps();
+    for(const s of db.services){
+      const row = {
+        legacy_id: s.id,
+        name: s.name,
+        icon: s.icon || '✈️',
+        color: s.color || 'green',
+        description: s.description || '',
+        airport: s.airport || '',
+        includes: s.includes || '',
+        cost: s.cost || '',
+        currency: s.currency || 'EGP',
+      };
+      const { error } = await sb.from('services').upsert(row, { onConflict: 'legacy_id' });
+      if(error) throw error;
+    }
+    await refreshRemoteUuidMaps();
+  }
+
+  const ordersToSync = staff
+    ? db.orders.slice()
+    : db.orders.filter(o => o.leaderId === myLeaderId);
+
+  for(const o of ordersToSync){
+    await syncSingleOrderToSupabase(sb, o);
   }
 }
 
@@ -3084,10 +3418,23 @@ function bulkApplyOrderLeader(){
 }
 
 function bulkDeleteOrders(){
+  void bulkDeleteOrdersAsync();
+}
+async function bulkDeleteOrdersAsync(){
   if(isTourLeaderRole()){ toast('Bulk actions are for coordinators only', 'err'); return; }
   const ids=[...ordersBulkSelected];
   if(!ids.length){ toast('Select orders to delete','info'); return; }
   if(!confirm(`Delete ${ids.length} order(s)? This cannot be undone.`)) return;
+  if(supabaseClientReady()){
+    try{
+      for(const id of ids){
+        await deleteRemoteOrderByLegacyId(id);
+      }
+    } catch(err){
+      toast('Could not delete on server: ' + (err && err.message ? err.message : 'error'), 'err');
+      return;
+    }
+  }
   const del=new Set(ids);
   db.orders=db.orders.filter(x=>!del.has(x.id));
   ordersBulkSelected.clear();
@@ -3367,12 +3714,23 @@ function cycleLeaderStatus(id){
   toast(`${l.name} → ${l.status} (manual roster)`,'info');
 }
 function deleteLeader(id){
+  void deleteLeaderAsync(id);
+}
+async function deleteLeaderAsync(id){
   if(!canManageLeadersAndServices()){ toast('Only supervisors and admins manage tour leaders', 'err'); return; }
   if(db.users.some(u => u.leaderId === id)){
     toast('Cannot delete: a user login is linked to this tour leader. Edit or remove that user first.', 'err');
     return;
   }
   if(!confirm('Delete this tour leader?'))return;
+  if(supabaseClientReady()){
+    try{
+      await deleteRemoteLeaderByLegacyId(id);
+    } catch(err){
+      toast('Could not delete leader on server: ' + (err && err.message ? err.message : 'error'), 'err');
+      return;
+    }
+  }
   db.leaders=db.leaders.filter(x=>x.id!==id);
   db.orders.forEach(o=>{if(o.leaderId==id)o.leaderId=null;});
   syncLeaderStatusesFromSchedule(true);
@@ -3507,6 +3865,9 @@ function renderServices(resetPage){
   }).join('');
 }
 function deleteService(id){
+  void deleteServiceAsync(id);
+}
+async function deleteServiceAsync(id){
   if(!canManageLeadersAndServices()){ toast('Only supervisors and admins manage service types', 'err'); return; }
   const svc=db.services.find(x=>x.id===id);
   if(!svc) return;
@@ -3515,6 +3876,19 @@ function deleteService(id){
     ? `Delete “${svc.name}”? It is linked on ${n} order(s). Orders keep the same label, but you lose this catalogue entry. Continue?`
     : `Delete “${svc.name}”?`;
   if(!confirm(msg)) return;
+  if(supabaseClientReady()){
+    try{
+      await deleteRemoteServiceByLegacyId(id);
+    } catch(err){
+      const msg2 = err && err.message ? err.message : 'error';
+      if(/foreign|restrict|violates/i.test(msg2)){
+        toast('Cannot delete on server: orders still reference this service UUID. Clear references in Supabase or keep the service.', 'err');
+      } else {
+        toast('Could not delete service on server: ' + msg2, 'err');
+      }
+      return;
+    }
+  }
   db.services=db.services.filter(x=>x.id!==id);
   save();renderServices(false);
   populateOrderTypeFilter();
@@ -5113,8 +5487,19 @@ function showDetail(id){
 }
 
 function deleteOrder(id){
+  void deleteOrderAsync(id);
+}
+async function deleteOrderAsync(id){
   if(isTourLeaderRole()){ toast('Only coordinators can delete orders', 'err'); return; }
-  if(!confirm('Delete this order?'))return;
+  if(!confirm('Delete this order?')) return;
+  if(supabaseClientReady()){
+    try{
+      await deleteRemoteOrderByLegacyId(id);
+    } catch(err){
+      toast('Could not delete order on server: ' + (err && err.message ? err.message : 'error'), 'err');
+      return;
+    }
+  }
   ordersBulkSelected.delete(id);
   db.orders=db.orders.filter(x=>x.id!==id);
   syncLeaderStatusesFromSchedule(true);
@@ -5307,6 +5692,11 @@ function startLoggedInApp(opts){
   const tdl = document.getElementById('today-date-label');
   if(tdl) tdl.textContent = fmtDate(todayStr());
   wireAppShellOnce();
+  if(supabaseClientReady()){
+    void pullRemoteWorkspaceIntoLocalSilently()
+      .then(()=>{ refreshAppAfterDataChange(); })
+      .catch(e=>{ console.warn('[RemoteSync] initial pull', e); });
+  }
   if(fromLogin){
     toast(`Signed in successfully — welcome, ${currentUser.displayName}.`, 'ok');
   }
