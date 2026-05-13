@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Airport Operations System</title>
+<title>Logistics System</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%23070b14'/%3E%3Cpath fill='%2306b6d4' d='M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2v5.5c0 .83.67 1.5 1.5 1.5s1.5-.67 1.5-1.5V14l8 2z'/%3E%3C/svg%3E">
 <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%23070b14'/%3E%3Cpath fill='%2306b6d4' d='M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2v5.5c0 .83.67 1.5 1.5 1.5s1.5-.67 1.5-1.5V14l8 2z'/%3E%3C/svg%3E">
-<meta name="description" content="Single-page airport meet-and-greet ops: orders, tour leaders, services, today timeline, reports, and Excel import/export — runs offline in your browser.">
+<meta name="description" content="Logistics operations: orders, tour leaders, services, today timeline, reports, and Excel import/export — runs offline in your browser.">
 <meta name="theme-color" content="#070b14" id="meta-theme-color">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <!-- Icons: Bootstrap Icons — https://icons.getbootstrap.com/ (use class="bi bi-*") -->
@@ -32,7 +32,7 @@
 <div id="app-boot-overlay" class="app-boot-overlay" role="status" aria-live="polite" aria-busy="true" aria-hidden="false">
   <div class="app-boot-inner">
     <div class="app-boot-logo" aria-hidden="true">✈️</div>
-    <div class="app-boot-title">Airport Operations</div>
+    <div class="app-boot-title">Logistics System</div>
     <p class="app-boot-sub">Loading workspace…</p>
     <div class="app-boot-spinner" aria-hidden="true"></div>
   </div>
@@ -42,7 +42,7 @@
 <div class="auth-gate" id="auth-gate" role="dialog" aria-modal="true" aria-labelledby="auth-gate-title">
   <div class="auth-card">
     <h1 id="auth-gate-title">Sign in</h1>
-    <p class="auth-sub">Airport Operations — use the account your administrator created (admin, supervisor, or tour leader).</p>
+    <p class="auth-sub">Logistics System — use the account your administrator created (admin, supervisor, or tour leader).</p>
     <form id="auth-form" autocomplete="username">
       <div class="fg">
         <label for="auth-username">Username</label>
@@ -74,8 +74,8 @@
       <div class="navbar-brand">
         <div class="logo-mark" aria-hidden="true"><i class="bi bi-airplane-fill"></i></div>
         <div class="navbar-brand-text">
-          <span class="navbar-brand-title">Airport Operations</span>
-          <span class="navbar-brand-ver">Ops v2.0</span>
+          <span class="navbar-brand-title">Logistics System</span>
+          <span class="navbar-brand-ver">v2.0</span>
         </div>
       </div>
       <div class="navbar-links-wrap">

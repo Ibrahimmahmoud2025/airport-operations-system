@@ -1117,7 +1117,7 @@ function buildShiftBriefing(today, todays){
   if(!risks.length) risks.push('No hard execution gaps detected');
 
   const lines = [
-    `Airport Ops Shift Brief - ${fmtDate(today)}`,
+    `Logistics System — Shift brief - ${fmtDate(today)}`,
     `Generated ${new Date().toLocaleString('en-GB', { hour12:false })}`,
     '',
     `Volume: ${active.length} active order${active.length === 1 ? '' : 's'} / ${pax} PAX / ${Math.round(spend).toLocaleString('en-GB')} recorded costs`,
@@ -1213,7 +1213,7 @@ function exportShiftBriefing(){
   const blob = new Blob([getCurrentShiftBriefingText()], { type:'text/plain;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `airport-shift-brief-${todayStr()}.txt`;
+  a.download = `logistics-shift-brief-${todayStr()}.txt`;
   a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
   toast('Shift briefing TXT downloaded', 'ok');
@@ -1224,13 +1224,13 @@ function exportDataBackup(){
   const payload = {
     schema: 'airportOpsV2',
     exportedAt: new Date().toISOString(),
-    app: 'Airport Operations System',
+    app: 'Logistics System',
     data: JSON.parse(JSON.stringify(db)),
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `airport-ops-backup-${todayStr()}.json`;
+  a.download = `logistics-backup-${todayStr()}.json`;
   a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
   toast('Backup JSON downloaded — store it somewhere safe (not only in this browser).', 'ok');
@@ -1406,7 +1406,7 @@ function exportOrdersExcel(){
   if (expRows.length) {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(expRows), 'Expenses');
   }
-  XLSX.writeFile(wb, `airport-orders-${todayStr()}.xlsx`);
+  XLSX.writeFile(wb, `logistics-orders-${todayStr()}.xlsx`);
   toast('Excel workbook downloaded', 'ok');
 }
 
@@ -2560,7 +2560,7 @@ function exportOrdersExcelBulk(){
     });
   });
   if(expRows.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(expRows), 'Expenses');
-  XLSX.writeFile(wb, `airport-orders-selected-${todayStr()}.xlsx`);
+  XLSX.writeFile(wb, `logistics-orders-selected-${todayStr()}.xlsx`);
   toast(`Exported ${ordersPick.length} order(s)`,'ok');
 }
 
