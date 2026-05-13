@@ -1,0 +1,1094 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr" data-auth-hydrate="guest">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Airport Operations System</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%23070b14'/%3E%3Cpath fill='%2306b6d4' d='M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2v5.5c0 .83.67 1.5 1.5 1.5s1.5-.67 1.5-1.5V14l8 2z'/%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%23070b14'/%3E%3Cpath fill='%2306b6d4' d='M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2v5.5c0 .83.67 1.5 1.5 1.5s1.5-.67 1.5-1.5V14l8 2z'/%3E%3C/svg%3E">
+<meta name="description" content="Single-page airport meet-and-greet ops: orders, tour leaders, services, today timeline, reports, and Excel import/export — runs offline in your browser.">
+<meta name="theme-color" content="#070b14" id="meta-theme-color">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<!-- Icons: Bootstrap Icons — https://icons.getbootstrap.com/ (use class="bi bi-*") -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" crossorigin="anonymous">
+<script>
+(function(){
+  try{
+    var t = localStorage.getItem('airportOpsTheme');
+    if(t !== 'light' && t !== 'dark') t = 'dark';
+    document.documentElement.setAttribute('data-theme', t);
+    var sraw = sessionStorage.getItem('airportOpsSessionUserId');
+    var sid = parseInt(sraw, 10);
+    document.documentElement.setAttribute('data-auth-hydrate', Number.isFinite(sid) ? 'pending' : 'guest');
+  }catch(e){
+    document.documentElement.setAttribute('data-theme','dark');
+    document.documentElement.setAttribute('data-auth-hydrate','guest');
+  }
+})();
+</script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app-boot-overlay" class="app-boot-overlay" role="status" aria-live="polite" aria-busy="true" aria-hidden="false">
+  <div class="app-boot-inner">
+    <div class="app-boot-logo" aria-hidden="true">✈️</div>
+    <div class="app-boot-title">Airport Operations</div>
+    <p class="app-boot-sub">Loading workspace…</p>
+    <div class="app-boot-spinner" aria-hidden="true"></div>
+  </div>
+</div>
+<a class="skip-link" href="#auth-username">Skip to sign in</a>
+
+<div class="auth-gate" id="auth-gate" role="dialog" aria-modal="true" aria-labelledby="auth-gate-title">
+  <div class="auth-card">
+    <h1 id="auth-gate-title">Sign in</h1>
+    <p class="auth-sub">Airport Operations — use the account your administrator created (admin, supervisor, or tour leader).</p>
+    <form id="auth-form" autocomplete="username">
+      <div class="fg">
+        <label for="auth-username">Username</label>
+        <input type="text" id="auth-username" name="username" required autocapitalize="none" spellcheck="false" autocomplete="username">
+      </div>
+      <div class="fg">
+        <label for="auth-password">Password</label>
+        <input type="password" id="auth-password" name="password" required autocomplete="current-password">
+      </div>
+      <div class="auth-actions">
+        <button type="submit" class="auth-submit-link" id="auth-submit">Sign in</button>
+      </div>
+      <p class="auth-enter-hint">You can also press <strong>Enter</strong> after your password.</p>
+    </form>
+    <p class="auth-hint">First-time setup: if no admin exists yet, one is created automatically — try username <strong>admin</strong> and password <strong>admin123</strong>, then change the password under Users.</p>
+    <p class="auth-hint" style="margin-top:8px;">Passwords are hashed locally for offline use only; this is not enterprise-grade security.</p>
+  </div>
+</div>
+
+<a class="skip-link" href="#content-start">Skip to main content</a>
+
+<!-- ═══════════════ MAIN ═══════════════ -->
+<main class="main" id="app-main">
+  <input type="file" id="backup-import-input" accept=".json,application/json" hidden onchange="importDataBackup(event)">
+
+  <header class="app-header">
+    <div class="navbar">
+      <div class="navbar-brand">
+        <div class="logo-mark" aria-hidden="true"><i class="bi bi-airplane-fill"></i></div>
+        <div class="navbar-brand-text">
+          <span class="navbar-brand-title">Airport Operations</span>
+          <span class="navbar-brand-ver">Ops v2.0</span>
+        </div>
+      </div>
+      <div class="navbar-links-wrap">
+        <nav class="navbar-links" id="main-nav" aria-label="Sections">
+          <button type="button" class="nav-btn active" data-nav="dash" onclick="nav('dash')">
+            <span class="ni"><i class="bi bi-speedometer2" aria-hidden="true"></i></span> Dashboard
+          </button>
+          <span class="navbar-sep" aria-hidden="true"></span>
+          <button type="button" class="nav-btn" data-nav="orders" onclick="nav('orders')">
+            <span class="ni"><i class="bi bi-journal-text" aria-hidden="true"></i></span> Orders
+            <span class="nav-badge" id="nb-orders">0</span>
+          </button>
+          <button type="button" class="nav-btn" data-nav="today" onclick="nav('today')">
+            <span class="ni"><i class="bi bi-calendar-event" aria-hidden="true"></i></span> Today
+            <span class="nav-badge" id="nb-today">0</span>
+          </button>
+          <span class="navbar-sep" aria-hidden="true"></span>
+          <button type="button" class="nav-btn" data-nav="leaders" onclick="nav('leaders')">
+            <span class="ni"><i class="bi bi-people" aria-hidden="true"></i></span> Leaders
+            <span class="nav-badge" id="nb-leaders">0</span>
+          </button>
+          <button type="button" class="nav-btn" data-nav="services" onclick="nav('services')">
+            <span class="ni"><i class="bi bi-sliders2-vertical" aria-hidden="true"></i></span> Services
+          </button>
+          <span class="navbar-sep" aria-hidden="true"></span>
+          <button type="button" class="nav-btn" data-nav="reports" onclick="nav('reports')">
+            <span class="ni"><i class="bi bi-graph-up-arrow" aria-hidden="true"></i></span> Analytics
+          </button>
+          <button type="button" class="nav-btn" data-nav="users" onclick="nav('users')">
+            <span class="ni"><i class="bi bi-person-gear" aria-hidden="true"></i></span> Users
+          </button>
+        </nav>
+      </div>
+      <div class="navbar-end">
+        <div class="clock" id="clockEl" aria-live="off" title="Local time">--:--:--</div>
+        <button type="button" class="btn btn-ghost btn-sm theme-toggle-btn" id="theme-toggle" onclick="toggleTheme()" title="Switch to light mode" aria-label="Switch to light mode"><i class="bi bi-sun-fill" aria-hidden="true"></i></button>
+        <div class="navbar-account">
+          <details class="navbar-account-dd" id="navbar-account-dd">
+            <summary class="navbar-account-trigger" aria-label="Account menu">
+              <span class="avatar-sm" id="toolbar-avatar" aria-hidden="true">?</span>
+              <i class="bi bi-chevron-down navbar-account-trigger-chev" aria-hidden="true"></i>
+            </summary>
+            <div class="navbar-account-panel" role="menu">
+              <div class="navbar-account-head">
+                <div class="navbar-account-display" id="toolbar-user-name">—</div>
+                <div class="navbar-account-id" id="toolbar-user-login"></div>
+                <div class="navbar-account-role" id="toolbar-user-role">—</div>
+              </div>
+              <div class="navbar-account-divider" role="separator" aria-hidden="true"></div>
+              <button type="button" class="navbar-account-row" role="menuitem" onclick="openAccountSettingsMenu()">
+                <i class="bi bi-sliders" aria-hidden="true"></i>
+                <span>Profile &amp; settings</span>
+              </button>
+              <div id="navbar-backup-block">
+                <div class="navbar-account-divider" role="separator" aria-hidden="true"></div>
+                <div class="navbar-account-section">Backup &amp; restore</div>
+                <button type="button" class="navbar-account-row" role="menuitem" onclick="closeNavbarAccountMenu(); exportDataBackup();">
+                  <i class="bi bi-download" aria-hidden="true"></i>
+                  <span>Export backup (JSON)</span>
+                </button>
+                <button type="button" class="navbar-account-row" role="menuitem" onclick="closeNavbarAccountMenu(); triggerImportBackup();">
+                  <i class="bi bi-folder2-open" aria-hidden="true"></i>
+                  <span>Restore from backup…</span>
+                </button>
+              </div>
+              <div class="navbar-account-divider" role="separator" aria-hidden="true"></div>
+              <button type="button" class="navbar-account-row navbar-account-row--danger" role="menuitem" id="toolbar-logout-btn" onclick="logoutFromAccountMenu()">
+                <i class="bi bi-box-arrow-right" aria-hidden="true"></i>
+                <span>Log out</span>
+              </button>
+            </div>
+          </details>
+        </div>
+      </div>
+    </div>
+
+    <div class="app-toolbar">
+      <div class="toolbar-util">
+        <button class="btn btn-primary" id="main-action-btn" onclick="openOrderModal()">
+          <i class="bi bi-airplane-fill" aria-hidden="true"></i> New Order
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div class="content" id="content-start" tabindex="-1">
+    <div id="content-route-loader" class="content-route-loader" aria-hidden="true">
+      <div class="content-route-loader-inner">
+        <div class="content-route-loader-label">Loading view</div>
+        <div class="skel-stack">
+          <div class="skel"></div>
+          <div class="skel skel--mid"></div>
+          <div class="skel skel--short"></div>
+          <div class="skel-grid">
+            <div class="skel-block"></div>
+            <div class="skel-block"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════ DASHBOARD ══════ -->
+    <div class="page active" id="p-dash">
+      <div class="dash-intro">
+        <div>
+          <div class="dash-intro-title">Operations snapshot</div>
+          <p class="dash-intro-sub" id="dash-intro-sub">PAX load, spend on the books, who to assign next, and what will break curbside if you ignore it.</p>
+        </div>
+        <div class="dash-clock-wrap">
+          <div class="dash-clock" id="dash-clock-time">—</div>
+          <div class="dash-clock-date" id="dash-clock-date">—</div>
+        </div>
+      </div>
+
+      <div class="stats-row">
+        <div class="stat s-blue">
+          <div class="stat-label">✈️ Today Orders</div>
+          <div class="stat-val" id="s-today">0</div>
+          <div class="stat-sub">Scheduled for today</div>
+        </div>
+        <div class="stat s-green">
+          <div class="stat-label">🟢 Arrival</div>
+          <div class="stat-val" id="s-in">0</div>
+          <div class="stat-sub">Arrivals today</div>
+        </div>
+        <div class="stat s-amber">
+          <div class="stat-label">🔴 Departure</div>
+          <div class="stat-val" id="s-out">0</div>
+          <div class="stat-sub">Departures today</div>
+        </div>
+        <div class="stat s-red">
+          <div class="stat-label">⚠️ Unassigned</div>
+          <div class="stat-val" id="s-unassigned">0</div>
+          <div class="stat-sub">No tour leader</div>
+        </div>
+      </div>
+
+      <div class="dash-banner" id="dash-banner" role="status">
+        <span class="dash-banner-icon" aria-hidden="true">📌</span>
+        <span id="dash-banner-text">Loading snapshot…</span>
+      </div>
+
+      <div class="card dash-insight-card" id="dash-insight-card">
+        <div class="card-head">
+          <div class="card-head-main">
+            <div class="card-title"><span class="dot" style="background:var(--cyan)"></span> Shift intelligence</div>
+          </div>
+          <div class="card-head-actions">
+            <button type="button" class="btn btn-ghost btn-sm" onclick="copyShiftBriefing()" title="Copy shift handoff text"><i class="bi bi-clipboard-check" aria-hidden="true"></i> Copy brief</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="exportShiftBriefing()" title="Download briefing as text file"><i class="bi bi-file-earmark-arrow-down" aria-hidden="true"></i> TXT</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="goOrdersTodayTimeline()">Today’s orders →</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="nav('reports')">Cost reports →</button>
+            <button type="button" class="btn btn-primary btn-sm" onclick="openOrderModal()"><i class="bi bi-airplane-fill" aria-hidden="true"></i> New order</button>
+          </div>
+        </div>
+        <div class="dash-insight-body">
+          <div class="dash-kpi-strip" id="dash-kpi-strip"></div>
+          <div class="dash-insight-split">
+            <div class="dash-next-panel" id="dash-next-panel"></div>
+            <div class="dash-attn-panel" id="dash-attn-panel"></div>
+          </div>
+          <div class="dash-load-hint" id="dash-load-hint" hidden></div>
+          <textarea id="shift-brief-text" class="shift-brief-text" readonly aria-hidden="true" hidden></textarea>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <!-- today schedule -->
+        <div class="card">
+          <div class="card-head">
+            <div class="card-head-main">
+              <div class="card-title">
+                <span class="dot" style="background:var(--cyan)"></span>
+                Today Schedule
+              </div>
+              <div class="dash-card-hint" id="dash-today-meta"></div>
+            </div>
+            <div class="card-head-actions">
+              <button type="button" class="btn btn-ghost btn-sm" onclick="nav('today')">View all</button>
+            </div>
+          </div>
+          <div id="dash-today-list"><div class="empty"><div class="ei">📅</div><p>No orders today</p></div></div>
+        </div>
+
+        <!-- leaders status -->
+        <div class="card dash-leaders-card">
+          <div class="card-head card-head--dash-leaders">
+            <div class="card-head-main dash-leaders-head-main">
+              <div class="card-title dash-leaders-head-title">
+                <span class="dot" style="background:var(--green)"></span>
+                Tour Leaders Status
+              </div>
+              <div class="dash-leaders-head-body">
+                <div class="dash-leader-summary" id="dash-leader-summary"></div>
+                <p class="dash-card-hint dash-leaders-meta" id="dash-leaders-meta"></p>
+              </div>
+            </div>
+            <div class="card-head-actions">
+              <button type="button" class="btn btn-ghost btn-sm" onclick="nav('leaders')">Manage</button>
+            </div>
+          </div>
+          <div id="dash-leaders-list"><div class="empty"><div class="ei">👥</div><p>No tour leaders</p></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════ ALL ORDERS ══════ -->
+    <div class="page" id="p-orders">
+      <div class="card">
+        <div class="orders-sticky-head">
+        <div class="card-head card-head--orders">
+          <div class="card-head-toolbar card-head-toolbar--orders">
+            <div class="orders-toolbar-row">
+              <div class="orders-toolbar-scroll" role="toolbar" aria-label="Search, filters, and sort">
+              <div class="orders-toolbar-brand">
+                <div class="card-title"><span class="dot" style="background:var(--blue)"></span> All Orders</div>
+              </div>
+              <div class="search-box search-box--orders">
+                <span aria-hidden="true" style="opacity:.6;font-size:13px;">🔍</span>
+                <input type="search" id="order-search" placeholder="Search flight, destination, nationality…" autocomplete="off" oninput="scheduleRenderOrders()" aria-label="Search orders">
+              </div>
+              <div class="toolbar-quick-filters" role="group" aria-label="Quick filters">
+                <button type="button" class="qf-btn" data-order-qf="today" onclick="setOrdersQuickFilter('today')"><span class="qf-ic">📅</span> Today</button>
+                <button type="button" class="qf-btn" data-order-qf="vip" onclick="setOrdersQuickFilter('vip')"><span class="qf-ic">⭐</span> VIP</button>
+                <button type="button" class="qf-btn" data-order-qf="pending" onclick="setOrdersQuickFilter('pending')"><span class="qf-ic">⏳</span> Pending</button>
+              </div>
+              <select class="filter-sel filter-sel--sort-mini" id="order-sort" onchange="renderOrders(true)" aria-label="Sort orders" title="Sort">
+                <option value="newest">Newest</option>
+                <option value="oldest">Oldest</option>
+                <option value="dateAsc">Date ↑</option>
+                <option value="dateDesc">Date ↓</option>
+                <option value="flightAsc">Flight A→Z</option>
+                <option value="flightDesc">Flight Z→A</option>
+                <option value="status">Status</option>
+                <option value="service">Service</option>
+              </select>
+              </div>
+              <details class="toolbar-more" id="orders-more-filters">
+                <summary class="toolbar-more-summary">More filters</summary>
+                <div class="toolbar-more-panel">
+                  <div class="toolbar-more-grid">
+                    <label class="tb-mini-field">
+                      <span class="tb-mini-lbl">⚙️ Service type</span>
+                      <select class="filter-sel" id="order-filter-type" onchange="renderOrders(true)" aria-label="Filter by service type">
+                        <option value="">All types</option>
+                      </select>
+                    </label>
+                    <label class="tb-mini-field">
+                      <span class="tb-mini-lbl">📋 Status</span>
+                      <select class="filter-sel" id="order-filter-status" onchange="renderOrders(true)" aria-label="Filter by status">
+                        <option value="">All statuses</option>
+                        <option value="Scheduled">Scheduled</option>
+                        <option value="In progress">In progress</option>
+                        <option value="Completed">Completed</option>
+                        <option value="Cancelled">Cancelled</option>
+                      </select>
+                    </label>
+                    <label class="tb-mini-field">
+                      <span class="tb-mini-lbl">👤 Assignment</span>
+                      <select class="filter-sel" id="order-filter-assign" onchange="renderOrders(true)" title="Tour leader assignment" aria-label="Filter by assignment">
+                        <option value="">All assignments</option>
+                        <option value="unassigned">Needs leader</option>
+                        <option value="assigned">Has leader</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div class="toolbar-more-divider"></div>
+                  <div class="toolbar-more-quick">
+                    <span class="tb-mini-lbl">Quick</span>
+                    <button type="button" class="qf-btn" data-order-qf="completed" onclick="setOrdersQuickFilter('completed')"><span class="qf-ic">✅</span> Completed</button>
+                  </div>
+                </div>
+              </details>
+              <button type="button" class="tb-icon-btn" onclick="exportOrdersExcel(); closeOrdersMoreFilters();" title="Export orders to Excel (.xlsx)" aria-label="Export orders to Excel">⬇</button>
+              <button type="button" class="tb-icon-btn" onclick="openOrdersImportModal(); closeOrdersMoreFilters();" title="Import orders from Excel workbook" aria-label="Import orders from Excel">⬆</button>
+            </div>
+          </div>
+          <div class="orders-chips-bar" id="order-filter-chips-wrap" hidden>
+            <span class="filter-chips-label">Active</span>
+            <div class="filter-chips-list" id="order-filter-chips"></div>
+          </div>
+        </div>
+        <div class="orders-bulk-bar" id="orders-bulk-bar" aria-hidden="true">
+          <span class="orders-bulk-count" id="orders-bulk-count">0 selected</span>
+          <div class="orders-bulk-actions">
+            <select id="orders-bulk-status-sel" class="filter-sel" aria-label="Bulk status">
+              <option value="">Set status…</option>
+              <option value="Scheduled">Scheduled</option>
+              <option value="In progress">In progress</option>
+              <option value="Completed">Completed</option>
+              <option value="Cancelled">Cancelled</option>
+            </select>
+            <button type="button" class="btn btn-primary btn-sm" onclick="bulkApplyOrderStatus()">Apply status</button>
+            <select id="orders-bulk-leader-sel" class="filter-sel" aria-label="Bulk assign tour leader"></select>
+            <button type="button" class="btn btn-primary btn-sm" onclick="bulkApplyOrderLeader()">Apply leader</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="exportOrdersExcelBulk()" title="Export selected rows only">⬇ Selected</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="clearOrdersBulkSelection()">Clear selection</button>
+            <button type="button" class="btn btn-sm" style="background:rgba(239,68,68,.14);color:#fecaca;border:1px solid rgba(239,68,68,.4);" onclick="bulkDeleteOrders()">Delete</button>
+          </div>
+        </div>
+        </div>
+        <div class="orders-table-meta" id="orders-table-meta" aria-live="polite"></div>
+        <div class="tbl-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="th-cb"><input type="checkbox" id="orders-select-all-page" title="Select all on this page" aria-label="Select all orders on this page" onchange="ordersToggleSelectPage(this.checked)"></th>
+                <th>Order #</th>
+                <th>Date</th>
+                <th>Time</th>
+                <th>Flight</th>
+                <th>Flight type</th>
+                <th>Service type</th>
+                <th>Tour leader</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="orders-tbody"></tbody>
+          </table>
+        </div>
+        <div class="pagination-bar" id="orders-pagination" hidden></div>
+      </div>
+    </div>
+
+    <!-- ══════ ORDER DETAIL (full page) ══════ -->
+    <div class="page" id="p-order-detail">
+      <div class="card">
+        <div class="card-head order-detail-head">
+          <button type="button" class="btn btn-ghost btn-sm order-detail-back" id="order-page-back" onclick="closeOrderPage()">← Back</button>
+          <div class="order-detail-head-main">
+            <div class="order-detail-line" id="order-detail-line"></div>
+          </div>
+          <button type="button" class="btn btn-primary btn-sm order-detail-edit" id="order-page-edit">✏️ Edit order</button>
+        </div>
+      </div>
+      <div id="order-detail-content"></div>
+    </div>
+
+    <!-- ══════ TODAY SCHEDULE ══════ -->
+    <div class="page" id="p-today">
+      <div class="card">
+        <div class="card-head">
+          <div class="card-head-main">
+            <div class="card-title"><span class="dot" style="background:var(--amber)"></span> Today Schedule</div>
+          </div>
+          <div class="card-head-actions">
+            <div class="toolbar-meta-chip" id="today-date-label"></div>
+          </div>
+        </div>
+        <div id="today-list"><div class="empty"><div class="ei">📅</div><p>No orders today</p></div></div>
+        <div class="pagination-bar" id="today-pagination" hidden></div>
+      </div>
+    </div>
+
+    <!-- ══════ LEADERS ══════ -->
+    <div class="page" id="p-leaders">
+      <div class="card">
+        <div class="card-head">
+          <div class="card-head-main">
+            <div class="card-title"><span class="dot" style="background:var(--green)"></span> Tour Leaders</div>
+          </div>
+          <div class="card-head-toolbar">
+            <div class="search-row">
+              <div class="toolbar-group toolbar-group--filters">
+                <div class="search-box">🔍
+                  <input type="text" id="leader-search" placeholder="Search…" autocomplete="off" oninput="scheduleRenderLeaders()" aria-label="Search tour leaders">
+                </div>
+              </div>
+              <div class="toolbar-divider" aria-hidden="true"></div>
+              <div class="toolbar-group toolbar-group--actions">
+                <button type="button" class="btn btn-ghost btn-sm" onclick="syncLeadersFromScheduleAndRefresh()" title="Set Available/Busy from open orders for guides in auto mode">⟳ Sync from schedule</button>
+                <button type="button" class="btn btn-primary btn-sm" onclick="openLeaderModal()">+ Add tour leader</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="tbl-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Tour leader</th>
+                <th>Phone</th>
+                <th>Specialty / Language</th>
+                <th>This month orders</th>
+                <th>Schedule insight</th>
+                <th title="Open Scheduled / In progress jobs for this guide — click a row to open the order">Busy with (open jobs)</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="leaders-tbody"></tbody>
+          </table>
+        </div>
+        <div class="pagination-bar" id="leaders-pagination" hidden></div>
+      </div>
+    </div>
+
+    <!-- ══════ SERVICE TYPES ══════ -->
+    <div class="page" id="p-services">
+      <div class="card">
+        <div class="card-head">
+          <div class="card-head-main">
+            <div class="card-title"><span class="dot" style="background:var(--purple)"></span> Service Types</div>
+          </div>
+          <div class="card-head-toolbar">
+            <div class="search-row">
+              <div class="toolbar-group toolbar-group--filters">
+                <div class="search-box">🔍
+                  <input type="text" id="service-list-search" placeholder="Search by name…" autocomplete="off" oninput="scheduleRenderServicesSearch()" aria-label="Search service types">
+                </div>
+              </div>
+              <div class="toolbar-divider" aria-hidden="true"></div>
+              <div class="toolbar-group toolbar-group--actions">
+                <button type="button" class="btn btn-primary btn-sm" onclick="openServiceModal()">+ Add service</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="services-list-body">
+          <div class="services-list-stats" id="services-list-stats" aria-live="polite"></div>
+          <div class="tbl-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Service</th>
+                  <th>Airport / location</th>
+                  <th>Orders</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="services-tbody"></tbody>
+            </table>
+          </div>
+          <div class="pagination-bar" id="services-pagination" hidden></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════ USERS (admin) ══════ -->
+    <div class="page" id="p-users">
+      <div class="card">
+        <div class="card-head">
+          <div class="card-head-main">
+            <div class="card-title"><span class="dot" style="background:var(--cyan)"></span> User accounts</div>
+          </div>
+          <div class="card-head-toolbar">
+            <div class="search-row">
+              <div class="toolbar-group toolbar-group--filters">
+                <div class="search-box">🔍
+                  <input type="text" id="user-search" placeholder="Search username or name…" autocomplete="off" oninput="scheduleRenderUsers()" aria-label="Search users">
+                </div>
+              </div>
+              <div class="toolbar-divider" aria-hidden="true"></div>
+              <div class="toolbar-group toolbar-group--actions">
+                <button type="button" class="btn btn-primary btn-sm" onclick="openUserModal()">+ Add user</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p style="font-size:12px;color:var(--muted2);margin:-4px 12px 12px;line-height:1.5;">Roles: <strong>Admin</strong> (full access including this screen), <strong>Supervisor</strong> (operations without user management), <strong>Tour leader</strong> (only orders assigned to their roster profile).</p>
+        <div class="tbl-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Username</th>
+                <th>Display name</th>
+                <th>Role</th>
+                <th>Tour leader link</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="users-tbody"></tbody>
+          </table>
+        </div>
+        <div class="pagination-bar" id="users-pagination" hidden></div>
+      </div>
+    </div>
+
+    <!-- ══════ REPORTS ══════ -->
+    <div class="page" id="p-reports">
+      <div class="reports-sticky-cluster">
+      <div class="card report-toolbar" style="margin-bottom:0;">
+        <div class="card-head report-toolbar-head">
+          <div class="report-toolbar-intro">
+            <div class="card-title"><span class="dot" style="background:var(--cyan)"></span> Reports workspace</div>
+            <p class="rep-hint" id="rep-hint">Select a date range, then use the tabs below.</p>
+          </div>
+          <div class="report-toolbar-grid">
+            <div class="report-toolbar-cluster">
+              <span class="report-toolbar-cluster-label">Date range</span>
+              <div class="report-toolbar-filters">
+                <div class="fg">
+                  <label for="rep-from">From</label>
+                  <input type="date" id="rep-from" onchange="resetReportPagination();renderReports()">
+                </div>
+                <div class="fg">
+                  <label for="rep-to">To</label>
+                  <input type="date" id="rep-to" onchange="resetReportPagination();renderReports()">
+                </div>
+                <div class="report-toolbar-presets">
+                  <button type="button" class="btn btn-ghost btn-sm" onclick="setReportPreset('month')">This month</button>
+                  <button type="button" class="btn btn-ghost btn-sm" onclick="setReportPreset('30d')">Last 30 days</button>
+                  <button type="button" class="btn btn-ghost btn-sm" onclick="setReportPreset('all')">All time</button>
+                </div>
+              </div>
+            </div>
+            <div class="report-toolbar-cluster report-toolbar-cluster--export">
+              <span class="report-toolbar-cluster-label">Export</span>
+              <div class="report-toolbar-actions">
+                <button type="button" class="btn btn-primary btn-sm" onclick="exportReportCsv()">⬇ Orders CSV</button>
+                <button type="button" class="btn btn-ghost btn-sm" onclick="exportExpenseBreakdownCsv()">⬇ Expenses CSV</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="report-tab-strip" role="tablist" aria-label="Report sections">
+        <button type="button" class="report-tab active" id="rep-tabbtn-overview" role="tab" aria-selected="true" onclick="switchReportTab('overview')">Overview</button>
+        <button type="button" class="report-tab" id="rep-tabbtn-expenses" role="tab" aria-selected="false" onclick="switchReportTab('expenses')">Expenses</button>
+        <button type="button" class="report-tab" id="rep-tabbtn-teams" role="tab" aria-selected="false" onclick="switchReportTab('teams')">Tour leaders</button>
+      </div>
+      </div>
+
+      <div class="report-tab-panel active" id="rep-panel-overview" role="tabpanel">
+        <p class="report-section-title">Orders snapshot</p>
+        <div class="stats-row" style="grid-template-columns:repeat(5,1fr);">
+          <div class="stat s-blue"><div class="stat-label">📋 Orders</div><div class="stat-val" id="r-total">0</div></div>
+          <div class="stat s-green"><div class="stat-label">✅ Completed</div><div class="stat-val" id="r-done">0</div></div>
+          <div class="stat s-amber"><div class="stat-label">📅 Scheduled</div><div class="stat-val" id="r-sched">0</div></div>
+          <div class="stat s-purple"><div class="stat-label">⏳ In progress</div><div class="stat-val" id="r-prog">0</div></div>
+          <div class="stat s-red"><div class="stat-label">❌ Cancelled</div><div class="stat-val" id="r-can">0</div></div>
+        </div>
+        <div class="stats-row" style="grid-template-columns:repeat(3,1fr);margin-bottom:18px;">
+          <div class="stat s-amber"><div class="stat-label">🧾 Total expenses</div><div class="stat-val" id="r-expense">0</div></div>
+          <div class="stat s-blue"><div class="stat-label">👥 Total PAX</div><div class="stat-val" id="r-pax">0</div></div>
+          <div class="stat s-green"><div class="stat-label">📊 Avg expense / order</div><div class="stat-val" id="r-exp-avg">0</div></div>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <div class="card-head-main">
+              <div class="card-title"><span class="dot" style="background:var(--purple)"></span> Orders by service type</div>
+            </div>
+          </div>
+          <div class="tbl-wrap">
+            <table>
+              <thead>
+                <tr><th>Service type</th><th>Orders</th><th>Share</th></tr>
+              </thead>
+              <tbody id="report-service-tbody"></tbody>
+            </table>
+          </div>
+          <div class="pagination-bar" id="report-svc-pagination" hidden></div>
+        </div>
+      </div>
+
+      <div class="report-tab-panel" id="rep-panel-expenses" role="tabpanel">
+        <p class="report-section-title">Cost analysis</p>
+        <div class="two-col" style="margin-bottom:18px;">
+          <div class="card">
+            <div class="card-head">
+              <div class="card-head-main">
+                <div class="card-title"><span class="dot" style="background:var(--amber)"></span> By category</div>
+              </div>
+            </div>
+            <div class="tbl-wrap">
+              <table>
+                <thead>
+                  <tr><th>Category</th><th>Amount</th><th>Share</th></tr>
+                </thead>
+                <tbody id="report-expense-tbody"></tbody>
+              </table>
+            </div>
+            <div class="pagination-bar" id="report-cat-pagination" hidden></div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <div class="card-head-main">
+                <div class="card-title"><span class="dot" style="background:var(--cyan)"></span> How filters work</div>
+              </div>
+            </div>
+            <div style="padding:14px 18px 16px;">
+              <div class="rep-help-title">Practical rules</div>
+              <ul class="rep-help-list">
+                <li><strong style="color:var(--text)">Orders</strong> are included when the <strong>flight date</strong> is inside From → To.</li>
+                <li><strong style="color:var(--text)">Expense lines</strong> use each line’s <strong>expense date</strong>; if empty, the <strong>order flight date</strong> is used.</li>
+                <li>Use <strong>Overview</strong> for volume mix, <strong>Expenses</strong> for receipts &amp; breakdown, <strong>Tour leaders</strong> for staffing KPIs.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <div class="card-head-main">
+              <div class="card-title"><span class="dot" style="background:var(--green)"></span> Expense breakdown</div>
+            </div>
+            <div class="card-head-toolbar">
+              <div class="search-row">
+                <div class="toolbar-group toolbar-group--filters">
+                  <select class="filter-sel" id="rep-exp-breakdown-mode" onchange="repExpPage=1;renderReports()" title="Group expenses" aria-label="Group expenses">
+                    <option value="lines">All lines</option>
+                    <option value="category">By category</option>
+                    <option value="order">By order</option>
+                    <option value="leader">By tour leader</option>
+                    <option value="date">By expense date</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="tbl-wrap">
+            <table>
+              <thead id="report-exp-detail-head"></thead>
+              <tbody id="report-exp-detail-tbody"></tbody>
+            </table>
+          </div>
+          <div class="pagination-bar" id="report-exp-pagination" hidden></div>
+        </div>
+      </div>
+
+      <div class="report-tab-panel" id="rep-panel-teams" role="tabpanel">
+        <p class="report-section-title">Team performance</p>
+        <div class="card">
+          <div class="card-head">
+            <div class="card-head-main">
+              <div class="card-title"><span class="dot" style="background:var(--blue)"></span> Tour leaders</div>
+            </div>
+          </div>
+          <div class="tbl-wrap">
+            <table>
+              <thead>
+                <tr><th>Tour leader</th><th>Orders</th><th>Expenses</th><th>Completed</th><th>Scheduled</th><th>In prog.</th><th>Cancelled</th><th>Completion</th></tr>
+              </thead>
+              <tbody id="report-tbody"></tbody>
+            </table>
+          </div>
+          <div class="pagination-bar" id="report-lead-pagination" hidden></div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</main>
+
+<!-- ═══════════════ ORDER MODAL ═══════════════ -->
+<div class="overlay" id="order-overlay">
+  <div class="modal modal--order">
+    <div class="modal-head">
+      <div class="modal-title" id="order-modal-title">✈️ New Order</div>
+      <button class="modal-close" onclick="closeModal('order-overlay')">✕</button>
+    </div>
+    <div class="modal-body order-form-body">
+      <div class="order-wizard" id="order-wizard">
+        <div class="order-wizard-head">
+          <div class="order-wizard-progress" id="order-wizard-progress" aria-hidden="true">
+            <div class="order-wizard-seg is-active" data-wizard-seg="0"></div>
+            <div class="order-wizard-seg" data-wizard-seg="1"></div>
+            <div class="order-wizard-seg" data-wizard-seg="2"></div>
+            <div class="order-wizard-seg" data-wizard-seg="3"></div>
+            <div class="order-wizard-seg" data-wizard-seg="4"></div>
+            <div class="order-wizard-seg" data-wizard-seg="5"></div>
+            <div class="order-wizard-seg" data-wizard-seg="6"></div>
+          </div>
+          <div class="order-wizard-meta">
+            <span class="order-wizard-step-num" id="order-wizard-step-num">Step 1 of 7</span>
+            <span class="order-wizard-step-name" id="order-wizard-step-name">Service type</span>
+          </div>
+        </div>
+
+        <div class="order-wizard-panels">
+          <div class="order-wizard-step is-active" data-order-step="0" role="tabpanel">
+            <div class="form-section service-type-panel">
+              <div class="service-type-simple">
+                <div class="form-section-title">Service type</div>
+                <div class="fg" style="margin-bottom:0;">
+                  <label for="o-type">Service type *</label>
+                  <select id="o-type">
+                    <option value="">— Select service type —</option>
+                  </select>
+                </div>
+                <p class="service-type-hint">Configured under <strong style="color:var(--muted2)">Settings → Service types</strong>.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="order-wizard-step" data-order-step="1" role="tabpanel">
+            <div class="form-section">
+              <div class="form-section-title">Flight</div>
+              <div class="form-grid g2">
+                <div class="fg">
+                  <label>Flight number *</label>
+                  <input type="text" id="o-flight" placeholder="MS-777">
+                </div>
+                <div class="fg">
+                  <label>Flight type</label>
+                  <select id="o-flightType">
+                    <option value="Arrival">Arrival</option>
+                    <option value="Departure">Departure</option>
+                    <option value="Transit">Transit</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-grid g2">
+                <div class="fg">
+                  <label>Flight date *</label>
+                  <input type="date" id="o-date" oninput="populateLeaderDropdown()">
+                </div>
+                <div class="fg">
+                  <label>Departure / arrival time *</label>
+                  <input type="time" id="o-time" oninput="populateLeaderDropdown()">
+                </div>
+              </div>
+              <div class="fg">
+                <label>Airport / destination</label>
+                <input type="text" id="o-dest" placeholder="Example: Cairo → Dubai">
+              </div>
+            </div>
+          </div>
+
+          <div class="order-wizard-step" data-order-step="2" role="tabpanel">
+            <div class="form-section">
+              <div class="form-section-title">Passengers</div>
+              <div class="form-grid g2">
+                <div class="fg">
+                  <label>Adults (total)</label>
+                  <input type="number" id="o-adults" placeholder="0" min="0" value="0" onchange="syncNationalityTotalsHint()">
+                </div>
+                <div class="fg">
+                  <label>Children (total)</label>
+                  <input type="number" id="o-children" placeholder="0" min="0" value="0" onchange="buildChildrenAges();syncNationalityTotalsHint();">
+                </div>
+              </div>
+              <div id="children-ages-container"></div>
+              <div class="nat-breakdown-block">
+                <div class="nat-breakdown-head">Nationality breakdown (counts per group)</div>
+                <div class="nat-breakdown-rows" id="nat-breakdown-rows"></div>
+                <button type="button" class="btn btn-ghost btn-sm" style="margin-top:10px;" onclick="addNationalityBreakdownRow()">+ Add nationality line</button>
+                <div class="nat-breakdown-hint" id="nat-breakdown-hint"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="order-wizard-step" data-order-step="3" role="tabpanel">
+            <div class="form-section">
+              <div class="form-section-title">Ground team</div>
+              <div class="form-grid g2">
+                <div class="fg">
+                  <label>Tour leader</label>
+                  <select id="o-leader">
+                    <option value="">-- Select tour leader --</option>
+                  </select>
+                </div>
+                <div class="fg">
+                  <label>Airport rep</label>
+                  <input type="text" id="o-rep" placeholder="Rep name">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="order-wizard-step" data-order-step="4" role="tabpanel">
+            <div class="form-section">
+              <div class="form-section-title">Vehicles</div>
+              <div class="veh-breakdown-block" style="margin-top:0;">
+                <div class="veh-breakdown-head">One row per vehicle — type, ownership, driver name &amp; phone</div>
+                <div class="veh-breakdown-rows" id="veh-breakdown-rows"></div>
+                <button type="button" class="btn btn-ghost btn-sm" style="margin-top:10px;" onclick="addVehicleRow()">+ Add vehicle</button>
+                <div class="veh-breakdown-hint" id="veh-breakdown-hint"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="order-wizard-step" data-order-step="5" role="tabpanel">
+            <div class="form-section">
+              <div class="form-section-title">Status &amp; notes</div>
+              <div class="form-grid g2">
+                <div class="fg">
+                  <label>Order status</label>
+                  <select id="o-status">
+                    <option value="Scheduled">Scheduled</option>
+                    <option value="In progress">In progress</option>
+                    <option value="Completed">Completed</option>
+                    <option value="Cancelled">Cancelled</option>
+                  </select>
+                </div>
+                <div class="fg">
+                  <label>Order #</label>
+                  <input type="text" id="o-ref" placeholder="Auto-generated" readonly>
+                </div>
+              </div>
+              <div class="fg">
+                <label>Notes</label>
+                <textarea id="o-notes" placeholder="Any notes or special instructions..."></textarea>
+              </div>
+            </div>
+          </div>
+
+          <div class="order-wizard-step" data-order-step="6" role="tabpanel">
+            <div class="form-section" style="margin-bottom:0;">
+              <div class="form-section-title">Attachments</div>
+              <p style="font-size:11px;color:var(--muted2);margin:-6px 0 10px;line-height:1.45;">Passports, manifests, images, PDFs…</p>
+              <div class="attach-zone" id="attach-zone" onclick="document.getElementById('file-input').click()">
+                Click to attach files or drop documents here
+              </div>
+              <input type="file" id="file-input" multiple style="display:none" onchange="handleFiles(this.files)">
+              <div class="file-list" id="file-list"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot order-wizard-foot">
+      <button type="button" class="btn btn-ghost" onclick="closeModal('order-overlay')">Cancel</button>
+      <div class="order-wizard-foot-actions">
+        <button type="button" class="btn btn-ghost" id="order-wizard-back" onclick="orderWizardGoPrev()" hidden>← Back</button>
+        <button type="button" class="btn btn-primary" id="order-wizard-next" onclick="orderWizardGoNext()">Next →</button>
+        <button type="button" class="btn btn-primary" id="order-wizard-save" onclick="saveOrder()" hidden>💾 Save order</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ LEADER MODAL ═══════════════ -->
+<div class="overlay" id="leader-overlay">
+  <div class="modal" style="width:480px;">
+    <div class="modal-head">
+      <div class="modal-title" id="leader-modal-title">👤 Add tour leader</div>
+      <button class="modal-close" onclick="closeModal('leader-overlay')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid g2">
+        <div class="fg"><label>Full name *</label><input type="text" id="l-name" placeholder="Name..."></div>
+        <div class="fg"><label>Phone</label><input type="text" id="l-phone" placeholder="+20..."></div>
+      </div>
+      <div class="form-grid g2">
+        <div class="fg"><label>Specialty / Language</label><input type="text" id="l-spec" placeholder="English, French..."></div>
+        <div class="fg">
+          <label>Status</label>
+          <select id="l-status">
+            <option value="Available">Available ✅</option>
+            <option value="Busy">Busy 🔴</option>
+            <option value="Off">Off ⏸️</option>
+          </select>
+        </div>
+      </div>
+      <div class="fg" style="margin-top:2px;">
+        <label class="l-auto-row" style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:12px;color:var(--muted2);line-height:1.45;font-weight:600;">
+          <input type="checkbox" id="l-auto-availability" checked style="margin-top:3px;flex-shrink:0;width:16px;height:16px;accent-color:var(--cyan);">
+          <span>Auto-update roster status from my assigned orders (Busy when on a job or overlapping slots; Available when clear). Off duty is always manual.</span>
+        </label>
+      </div>
+      <div class="fg"><label>Notes</label><textarea id="l-notes" placeholder="Any info..."></textarea></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-primary" onclick="saveLeader()">💾 Save</button>
+      <button class="btn btn-ghost" onclick="closeModal('leader-overlay')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ SERVICE MODAL ═══════════════ -->
+<div class="overlay" id="service-overlay">
+  <div class="modal" style="width:560px;max-width:96vw;">
+    <div class="modal-head">
+      <div class="modal-title" id="service-modal-title">⚙️ Add service type</div>
+      <button class="modal-close" onclick="closeModal('service-overlay')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p id="service-modal-banner" class="service-modal-banner" style="display:none;" role="status"></p>
+      <div class="form-grid g2">
+        <div class="fg">
+          <label for="sv-name">Service name *</label>
+          <input type="text" id="sv-name" placeholder="Example: VIP Arrival">
+        </div>
+        <div class="fg">
+          <label>Default price</label>
+          <div style="display:flex;gap:8px;align-items:stretch;">
+            <input type="number" id="sv-cost" min="0" step="0.01" placeholder="0" style="flex:1;">
+            <input type="text" id="sv-currency" placeholder="EGP" style="width:76px;">
+          </div>
+        </div>
+      </div>
+      <div class="fg">
+        <label for="sv-airport">Airport / where it runs</label>
+        <input type="text" id="sv-airport" placeholder="e.g. Cairo International (CAI) — Terminal 3">
+      </div>
+      <div class="fg">
+        <label for="sv-desc">Description</label>
+        <textarea id="sv-desc" rows="2" placeholder="What this service is (for staff and sales)…"></textarea>
+      </div>
+      <div class="fg">
+        <label for="sv-includes">What it includes</label>
+        <textarea id="sv-includes" rows="3" placeholder="Meet and greet, fast-track, lounge, luggage…"></textarea>
+      </div>
+      <div class="form-grid g2">
+        <div class="fg">
+          <label>Icon</label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;" id="icon-picker">
+            <span style="font-size:20px;cursor:pointer;padding:4px;" onclick="pickIcon('✈️')">✈️</span>
+            <span style="font-size:20px;cursor:pointer;padding:4px;" onclick="pickIcon('🛬')">🛬</span>
+            <span style="font-size:20px;cursor:pointer;padding:4px;" onclick="pickIcon('🛫')">🛫</span>
+            <span style="font-size:20px;cursor:pointer;padding:4px;" onclick="pickIcon('⭐')">⭐</span>
+            <span style="font-size:20px;cursor:pointer;padding:4px;" onclick="pickIcon('🔄')">🔄</span>
+            <span style="font-size:20px;cursor:pointer;padding:4px;" onclick="pickIcon('🚌')">🚌</span>
+            <span style="font-size:20px;cursor:pointer;padding:4px;" onclick="pickIcon('🏨')">🏨</span>
+            <span style="font-size:20px;cursor:pointer;padding:4px;" onclick="pickIcon('🎩')">🎩</span>
+          </div>
+          <input type="text" id="sv-icon" placeholder="Or type an emoji…" style="margin-top:8px;">
+        </div>
+        <div class="fg">
+          <label>Colour tag</label>
+          <div id="sv-color-swatches" style="display:flex;gap:8px;flex-wrap:wrap;">
+            <div style="width:28px;height:28px;border-radius:50%;background:var(--green);cursor:pointer;border:2px solid transparent;" onclick="pickColor('green')" title="Green"></div>
+            <div style="width:28px;height:28px;border-radius:50%;background:var(--red);cursor:pointer;" onclick="pickColor('red')" title="Red"></div>
+            <div style="width:28px;height:28px;border-radius:50%;background:var(--purple);cursor:pointer;" onclick="pickColor('purple')" title="Purple"></div>
+            <div style="width:28px;height:28px;border-radius:50%;background:var(--amber);cursor:pointer;" onclick="pickColor('amber')" title="Amber"></div>
+            <div style="width:28px;height:28px;border-radius:50%;background:var(--blue);cursor:pointer;" onclick="pickColor('blue')" title="Blue"></div>
+            <div style="width:28px;height:28px;border-radius:50%;background:var(--cyan);cursor:pointer;" onclick="pickColor('cyan')" title="Cyan"></div>
+          </div>
+          <input type="hidden" id="sv-color" value="green">
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn btn-primary" id="sv-btn-save" onclick="saveService()">💾 Save</button>
+      <button type="button" class="btn btn-ghost" id="sv-btn-edit" style="display:none" onclick="switchServiceModalToEdit()">✏️ Edit</button>
+      <button type="button" class="btn btn-ghost" id="sv-btn-cancel" onclick="closeModal('service-overlay')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ ORDERS IMPORT ═══════════════ -->
+<div class="overlay" id="orders-import-overlay">
+  <div class="modal modal--import">
+    <div class="modal-head">
+      <div class="modal-title" id="orders-import-modal-title">📥 Import orders</div>
+      <button type="button" class="modal-close" onclick="closeModal('orders-import-overlay')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p class="modal-hint">
+        Use the same layout as <strong>Export</strong>: sheet <span style="font-family:var(--mono);font-size:11px;">Orders</span> (required) and optional <span style="font-family:var(--mono);font-size:11px;">Expenses</span>.
+        Formats: <span style="font-family:var(--mono);font-size:11px;">.xlsx</span> or <span style="font-family:var(--mono);font-size:11px;">.xls</span>.
+      </p>
+      <div class="modal-section">
+        <span class="modal-section-title">Mode</span>
+        <div class="radio-stack">
+          <label class="radio-row">
+            <input type="radio" name="orders-import-mode" value="merge" checked>
+            <span><strong>Merge</strong> — append imported rows as new orders (new IDs). Nothing you already have is removed.</span>
+          </label>
+          <label class="radio-row">
+            <input type="radio" name="orders-import-mode" value="replace">
+            <span><strong>Replace</strong> — delete all current orders and load only what is in this file.</span>
+          </label>
+        </div>
+      </div>
+      <div class="modal-section">
+        <label class="modal-section-title" for="orders-import-file">Workbook</label>
+        <input type="file" id="orders-import-file" class="modal-file-input" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel">
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn btn-primary" onclick="runOrdersImport()">Import</button>
+      <button type="button" class="btn btn-ghost" onclick="closeModal('orders-import-overlay')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ USER ACCOUNT MODAL ═══════════════ -->
+<div class="overlay" id="user-overlay">
+  <div class="modal" style="width:500px;">
+    <div class="modal-head">
+      <div class="modal-title" id="user-modal-title">👤 Add user</div>
+      <button type="button" class="modal-close" onclick="closeModal('user-overlay')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid g2">
+        <div class="fg"><label for="u-username">Username *</label><input type="text" id="u-username" placeholder="login name" autocapitalize="none" spellcheck="false" autocomplete="off"></div>
+        <div class="fg"><label for="u-display">Display name *</label><input type="text" id="u-display" placeholder="Shown in toolbar"></div>
+      </div>
+      <div class="form-grid g2">
+        <div class="fg">
+          <label for="u-role">Role *</label>
+          <select id="u-role" onchange="syncUserFormLeaderField()">
+            <option value="admin">Admin</option>
+            <option value="supervisor">Supervisor</option>
+            <option value="leader">Tour leader</option>
+          </select>
+        </div>
+        <div class="fg" id="u-leader-wrap">
+          <label for="u-leader">Linked tour leader *</label>
+          <select id="u-leader"></select>
+        </div>
+      </div>
+      <div class="fg">
+        <label for="u-password">Password <span id="u-password-hint">(required for new users)</span></label>
+        <input type="password" id="u-password" autocomplete="new-password" placeholder="••••••••">
+      </div>
+      <div class="fg" id="u-active-wrap" style="display:flex;align-items:center;gap:10px;">
+        <input type="checkbox" id="u-active" checked style="width:18px;height:18px;accent-color:var(--cyan);">
+        <label for="u-active" style="margin:0;font-weight:600;color:var(--muted2);">Account active (can sign in)</label>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn btn-primary" onclick="saveUser()">💾 Save user</button>
+      <button type="button" class="btn btn-ghost" onclick="closeModal('user-overlay')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div id="toasts" role="status" aria-live="polite" aria-relevant="additions"></div>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="app.js" defer></script>
+</body>
+</html>
