@@ -73,17 +73,32 @@ See `.env.example`. Vercel **Project → Settings → Environment Variables**:
 | `NEXT_PUBLIC_SUPABASE_URL` | Yes for remote | Project URL (**Settings → API**). |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes for remote | `anon` `public` key (**Settings → API**). |
 | `NEXT_PUBLIC_LOGISTICS_AUTH_EMAIL_SUFFIX` | No | Default `@users.logistics.local`; must match emails you create in Supabase. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Yes for **remote “Add user”** | **Server only** (Vercel env). Used by `api/create-user.js`. Never `NEXT_PUBLIC_*`. |
+| `SUPABASE_URL` | Optional for API | Same as project URL; API also accepts `NEXT_PUBLIC_SUPABASE_URL` if this is unset. |
+| `LOGISTICS_AUTH_EMAIL_SUFFIX` | Optional for API | Defaults to `@users.logistics.local`; should match `NEXT_PUBLIC_LOGISTICS_AUTH_EMAIL_SUFFIX`. |
 
 Build step (`npm run build`) writes `public-config.js` from these variables.
 
-## 8. Testing checklist
+## 8. Remote user creation (Vercel serverless)
+
+When `DATA_SOURCE=remote` and the browser has Supabase configured, creating a user from **Users → Add user** calls **`POST /api/create-user`** with `Authorization: Bearer <access_token>`.
+
+- **Caller check:** the token must belong to an **active admin** (`public.profiles.role = 'admin'`).
+- **Implementation:** `api/create-user.js` uses **`SUPABASE_SERVICE_ROLE_KEY`** only on the server (Vercel). The service role is never bundled into `app.js` or `public-config.js`.
+- **Why not an Edge Function:** keeps one deploy surface (Vercel), uses the official JS client, and avoids duplicating CORS/auth wiring for this static app.
+- **After create:** the app still writes a **local `db.users` row** (with `supabaseUserId`) for mapping to orders; then it **reloads profiles** from Supabase and merges into the list.
+
+If `public.leaders` has no row for the chosen **legacy** leader id, the Auth user is still created but `profiles.leader_id` may stay null until leaders are synced to Postgres; the UI shows an informational toast in that case.
+
+## 9. Testing checklist
 
 1. **Local default:** do not set remote envs; sign in with existing local users — unchanged.
 2. **Remote without keys:** set `DATA_SOURCE=remote` but omit Supabase keys — app shows configuration error on sign-in; set `localStorage.LOGISTICS_DATA_SOURCE='local'` to recover in that tab.
 3. **Remote:** create Supabase user + profile row; ensure same username under **Users** in the app; sign in with Supabase password — data still from `localStorage`.
 4. **Logout:** clears Supabase session and `logisticsRemoteAuth` session flag.
+5. **Remote “Add user”:** set Vercel env vars for the API; sign in as admin (remote); add user with password; confirm row in **Authentication → Users** and **profiles**; confirm Users table refreshes.
 
-## 9. Security notes
+## 10. Security notes
 
 - The `anon` key is public; RLS protects tables. Never expose the **service role** key in the frontend.
 - `public-config.js` is generated at build time and contains the anon key (expected for Supabase client apps).

@@ -379,6 +379,98 @@ function applyRemoteProfileToCurrentUser(profileRow, opts){
   return true;
 }
 
+let _profilesRefreshInFlight = null;
+async function refreshUsersFromSupabaseProfiles(){
+  if(!supabaseClientReady() || !canManageUsers()) return;
+  if(_profilesRefreshInFlight) return _profilesRefreshInFlight;
+  _profilesRefreshInFlight = (async ()=>{
+    try{
+      const sb = getSupabase();
+      const { data: profiles, error: pErr } = await sb
+        .from('profiles')
+        .select('user_id,username,display_name,role,leader_id,active')
+        .order('username');
+      if(pErr){
+        console.warn('[RemoteUsers] profiles', pErr);
+        toast('Could not load user profiles from server', 'err');
+        return;
+      }
+      const { data: leaderRows } = await sb.from('leaders').select('id, legacy_id');
+      const uuidToLegacy = {};
+      (leaderRows || []).forEach(r=>{
+        if(r && r.id){
+          const leg = parseInt(r.legacy_id, 10);
+          uuidToLegacy[r.id] = Number.isFinite(leg) ? leg : null;
+        }
+      });
+      for(const row of profiles || []){
+        const un = normalizeUsername(row.username);
+        if(!un) continue;
+        const role = ['admin', 'supervisor', 'leader'].includes(String(row.role)) ? String(row.role) : 'leader';
+        const active = row.active !== false;
+        const leaderLegacy = row.leader_id ? uuidToLegacy[row.leader_id] : null;
+        const validLeader = role === 'leader' && Number.isFinite(leaderLegacy) && db.leaders.some(l => l.id === leaderLegacy);
+        let lu = db.users.find(u => u.supabaseUserId === row.user_id) || db.users.find(u => u.username === un);
+        if(lu){
+          lu.displayName = String(row.display_name || lu.displayName).trim().slice(0, 120) || lu.displayName;
+          lu.role = role;
+          lu.active = active;
+          lu.supabaseUserId = row.user_id;
+          if(role === 'leader'){
+            if(validLeader) lu.leaderId = leaderLegacy;
+          } else {
+            lu.leaderId = null;
+          }
+        } else {
+          const id = db.nextUserId++;
+          const nu = {
+            id,
+            username: un,
+            displayName: String(row.display_name || un).trim().slice(0, 120) || un,
+            role,
+            salt: '',
+            passwordHash: '',
+            leaderId: role === 'leader' && validLeader ? leaderLegacy : null,
+            active,
+            createdAt: new Date().toISOString(),
+            supabaseUserId: row.user_id,
+          };
+          const shaped = ensureUserShape(nu);
+          if(shaped) db.users.push(shaped);
+        }
+      }
+      recomputeNextIds(db);
+      save();
+    } catch(err){
+      console.error('[RemoteUsers] refresh', err);
+      toast(err && err.message ? err.message : 'Profile sync failed', 'err');
+    } finally{
+      _profilesRefreshInFlight = null;
+    }
+  })();
+  return _profilesRefreshInFlight;
+}
+
+async function createRemoteAppUserViaApi(payload){
+  const sb = getSupabase();
+  const { data: sessWrap, error: sErr } = await sb.auth.getSession();
+  if(sErr) console.warn('[RemoteUsers] session', sErr);
+  const session = sessWrap && sessWrap.session;
+  if(!session) throw new Error('Your session expired. Sign in again.');
+  const origin = typeof location !== 'undefined' ? location.origin : '';
+  const res = await fetch(`${origin}/api/create-user`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+  const json = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
+  return json;
+}
+
 function ensureUserShape(u){
   if(!u || typeof u !== 'object') return null;
   const id = parseInt(u.id, 10);
@@ -387,6 +479,9 @@ function ensureUserShape(u){
   const lid = u.leaderId != null && u.leaderId !== '' ? parseInt(u.leaderId, 10) : null;
   const uname = normalizeUsername(u.username);
   if(!uname) return null;
+  const sid = (u.supabaseUserId != null && String(u.supabaseUserId).trim())
+    ? String(u.supabaseUserId).trim()
+    : null;
   return {
     id,
     username: uname,
@@ -397,6 +492,7 @@ function ensureUserShape(u){
     leaderId: role === 'leader' ? (Number.isFinite(lid) ? lid : null) : null,
     active: u.active !== false,
     createdAt: u.createdAt || new Date().toISOString(),
+    supabaseUserId: sid,
   };
 }
 
@@ -1026,7 +1122,7 @@ function editUser(id){
   updateUserLoginUsernamePreview();
 }
 
-function saveUser(){
+async function saveUser(){
   if(!canManageUsers()) return;
   const displayName = document.getElementById('u-display').value.trim();
   const role = document.getElementById('u-role').value;
@@ -1077,6 +1173,58 @@ function saveUser(){
     }
     if(db.users.some(x => x.username === username)){ toast('That username is already taken', 'err'); return; }
     if(!password){ toast('Set an initial password for new users', 'err'); return; }
+
+    if(supabaseClientReady()){
+      try{
+        const json = await createRemoteAppUserViaApi({
+          username,
+          displayName,
+          role,
+          password,
+          leaderLegacyId: role === 'leader' ? leaderPick : null,
+        });
+        const id = db.nextUserId++;
+        const nu = {
+          id,
+          username,
+          displayName,
+          role,
+          salt: '',
+          passwordHash: '',
+          leaderId: role === 'leader' ? leaderPick : null,
+          active: true,
+          createdAt: new Date().toISOString(),
+          supabaseUserId: json.userId,
+        };
+        const shaped = ensureUserShape(nu);
+        if(!shaped){
+          db.nextUserId = id;
+          toast('Could not store local user mapping', 'err');
+          return;
+        }
+        db.users.push(shaped);
+        save();
+        await refreshUsersFromSupabaseProfiles();
+        if(!json.leaderRemoteLinked && role === 'leader'){
+          toast('User created online — roster link is local until leaders exist in Supabase.', 'info');
+        } else {
+          toast(`User created — sign in as "${username}" with the password you set (online auth).`, 'ok');
+        }
+        const rawAfter = document.getElementById('u-username')?.value;
+        const usernameAfter = normalizeUsername(rawAfter);
+        if(usernameAfter){
+          const authUserEl = document.getElementById('auth-username');
+          if(authUserEl) authUserEl.value = usernameAfter;
+        }
+        closeModal('user-overlay');
+        renderUsers(false);
+        return;
+      } catch(err){
+        toast(err && err.message ? err.message : 'Could not create user on server', 'err');
+        return;
+      }
+    }
+
     const salt = randomSalt();
     const nu = {
       id: db.nextUserId++,
@@ -1092,7 +1240,7 @@ function saveUser(){
     db.users.push(nu);
   }
   save();
-  if(editingUserId === null){
+  if(editingUserId === null && !supabaseClientReady()){
     const rawAfter = document.getElementById('u-username')?.value;
     const usernameAfter = normalizeUsername(rawAfter);
     let persistedUser = null;
@@ -1127,6 +1275,13 @@ function saveUser(){
   }
   closeModal('user-overlay');
   renderUsers(false);
+}
+
+function saveUserFromModal(){
+  void saveUser().catch(err=>{
+    console.error('[UserAuth] saveUser', err);
+    toast(err && err.message ? err.message : 'Save failed', 'err');
+  });
 }
 
 function toggleUserActive(id){
@@ -1371,7 +1526,13 @@ function nav(page, opts){
   if(page==='services') renderServices(false);
   if(page==='orders') renderOrders(false);
   if(page==='leaders') renderLeaders(false);
-  if(page==='users') renderUsers(false);
+  if(page==='users'){
+    if(supabaseClientReady() && canManageUsers()){
+      void refreshUsersFromSupabaseProfiles().then(()=>renderUsers(false));
+    } else {
+      renderUsers(false);
+    }
+  }
   if(page==='dash') renderDash();
   if(showRouteSkeleton) scheduleRouteLoaderHide();
 }
