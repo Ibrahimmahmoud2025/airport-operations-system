@@ -351,8 +351,32 @@ function recomputeNextIds(d){
   d.nextUserId = Math.max(Number.isFinite(nu) ? nu : 0, maxU + 1) || 1;
 }
 
+/**
+ * If there is no active admin account, adds exactly one: username `admin`, password `admin123`
+ * (hashed with a random salt). Safe to call on every load/migration; never removes or replaces users.
+ */
+function ensureDefaultAdminAccount(d){
+  if(!d || typeof d !== 'object' || !Array.isArray(d.users)) return;
+  const hasAdmin = d.users.some(u => u.role === 'admin' && u.active !== false);
+  if(hasAdmin) return;
+  const salt = randomSalt();
+  const maxId = d.users.length ? d.users.reduce((m, u) => Math.max(m, u.id || 0), 0) : 0;
+  const id = maxId + 1;
+  d.users.push({
+    id,
+    username: 'admin',
+    displayName: 'Administrator',
+    role: 'admin',
+    salt,
+    passwordHash: simplePwdHash('admin123', salt),
+    leaderId: null,
+    active: true,
+    createdAt: new Date().toISOString(),
+  });
+}
+
 function applyMigrationsToDb(d){
-  if(!d || typeof d !== 'object') return defaultDB();
+  if(!d || typeof d !== 'object') return applyMigrationsToDb(defaultDB());
   if(!Array.isArray(d.services)) d.services = [];
   d.services = d.services.filter(s => s && typeof s === 'object').map(migrateService).filter(s => s && s.id > 0);
   if(!d.services.length){
@@ -378,23 +402,7 @@ function applyMigrationsToDb(d){
     seen.add(u.username);
     return true;
   });
-  const hasAdmin = d.users.some(u => u.role === 'admin' && u.active !== false);
-  if(!hasAdmin){
-    const salt = randomSalt();
-    const maxId = d.users.length ? d.users.reduce((m, u) => Math.max(m, u.id || 0), 0) : 0;
-    const id = maxId + 1;
-    d.users.push({
-      id,
-      username: 'admin',
-      displayName: 'Administrator',
-      role: 'admin',
-      salt,
-      passwordHash: simplePwdHash('admin123', salt),
-      leaderId: null,
-      active: true,
-      createdAt: new Date().toISOString(),
-    });
-  }
+  ensureDefaultAdminAccount(d);
   recomputeNextIds(d);
   return d;
 }
@@ -402,11 +410,13 @@ function applyMigrationsToDb(d){
 function load(){
   try{
     const raw = localStorage.getItem(DB_KEY);
-    if(raw == null || raw === '') return defaultDB();
+    if(raw == null || raw === ''){
+      return applyMigrationsToDb(defaultDB());
+    }
     const d = JSON.parse(raw);
     return applyMigrationsToDb(d);
   } catch{
-    return defaultDB();
+    return applyMigrationsToDb(defaultDB());
   }
 }
 
