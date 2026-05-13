@@ -14,6 +14,8 @@ let hashSyncFromApp = false;
 let routeLoaderShowTid = null;
 let routeLoaderGeneration = 0;
 const ROUTE_LOADER_SHOW_DELAY_MS = 165;
+/** Temporary: verbose password verification logs (set false when finished debugging). */
+const LOG_LOGIN_PASSWORD_DEBUG = true;
 
 function markAuthBootComplete(){
   document.documentElement.setAttribute('data-auth-ready','yes');
@@ -230,6 +232,57 @@ function simplePwdHash(password, salt){
   return x.slice(0, 160);
 }
 
+/**
+ * Same path as login: {@link simplePwdHash} with trimmed salt (new salts never include padding).
+ */
+function computePasswordHashForStorage(plainPassword, salt){
+  return simplePwdHash(String(plainPassword ?? ''), String(salt ?? '').trim());
+}
+
+/**
+ * Compares entered password to stored hash using {@link simplePwdHash} + stored salt.
+ * Tries trimmed salt first, then raw salt (legacy data may have been hashed with padded salts).
+ * Logs when {@link LOG_LOGIN_PASSWORD_DEBUG} is true.
+ */
+function verifyStoredPasswordMatches(plainPassword, u){
+  const stored = String(u && u.passwordHash != null ? u.passwordHash : '').trim();
+  const saltRaw = String(u && u.salt != null ? u.salt : '');
+  const plain = String(plainPassword ?? '');
+  if(/^\$2[aby]\$/.test(stored)){
+    if(LOG_LOGIN_PASSWORD_DEBUG){
+      console.warn('[UserAuth] stored hash looks like bcrypt — cannot verify with simplePwdHash; admin must reset password in Users.');
+    }
+    return false;
+  }
+  const saltCandidates = [];
+  const st = saltRaw.trim();
+  if(st) saltCandidates.push(st);
+  if(saltRaw && saltRaw !== st) saltCandidates.push(saltRaw);
+  if(!saltCandidates.length && saltRaw) saltCandidates.push(saltRaw);
+  let computed = '';
+  let match = false;
+  for(const sal of saltCandidates){
+    computed = simplePwdHash(plain, sal);
+    if(computed === stored){
+      match = true;
+      break;
+    }
+  }
+  if(LOG_LOGIN_PASSWORD_DEBUG){
+    console.log('[UserAuth] password verify detail', {
+      enteredPassword: plain,
+      enteredPasswordLen: plain.length,
+      saltRawLen: saltRaw.length,
+      saltCandidatesTried: saltCandidates,
+      generatedLoginHash: computed,
+      storedPasswordHash: stored,
+      hashLengthsEqual: computed.length === stored.length,
+      comparisonResult: match,
+    });
+  }
+  return match;
+}
+
 function randomSalt(){
   try{
     const a = new Uint8Array(16);
@@ -263,7 +316,7 @@ function ensureUserShape(u){
     displayName: String(u.displayName || uname).trim().slice(0, 120) || uname,
     role,
     salt: String(u.salt || ''),
-    passwordHash: String(u.passwordHash || ''),
+    passwordHash: String(u.passwordHash || '').trim(),
     leaderId: role === 'leader' ? (Number.isFinite(lid) ? lid : null) : null,
     active: u.active !== false,
     createdAt: u.createdAt || new Date().toISOString(),
@@ -377,7 +430,7 @@ function ensureDefaultAdminAccount(d){
     displayName: 'Administrator',
     role: 'admin',
     salt,
-    passwordHash: simplePwdHash('admin123', salt),
+    passwordHash: computePasswordHashForStorage('admin123', salt),
     leaderId: null,
     active: true,
     createdAt: new Date().toISOString(),
@@ -404,6 +457,10 @@ function applyMigrationsToDb(d){
     sanitizeOrderLeaderRefOnOrder(o, d.leaders);
   });
   if(!Array.isArray(d.users)) d.users = [];
+  d.users.forEach(raw => {
+    if(!raw || typeof raw !== 'object') return;
+    if(raw.passwordHash != null) raw.passwordHash = String(raw.passwordHash).trim();
+  });
   d.users = d.users.map(ensureUserShape).filter(Boolean);
   const seen = new Set();
   d.users = d.users.filter(u => {
@@ -532,7 +589,7 @@ function tryRestoreSession(){
   const sid = sessionUserIdFromStorage();
   if(sid == null) return false;
   const u = db.users.find(x => x.id === sid && x.active !== false);
-  if(!u || !u.passwordHash || !u.salt){
+  if(!u || !String(u.passwordHash || '').trim() || !String(u.salt || '').trim()){
     sessionStorage.removeItem(SESSION_KEY);
     return false;
   }
@@ -662,19 +719,25 @@ function performLogin(){
     matchedUserId: u ? u.id : null,
   });
   if(!u){
-    showAuthInlineError('Unknown username. Use the same login name as in Users (letters, numbers, . _ - only).');
+    showAuthInlineError('Unknown username.');
     return;
   }
   if(u.active === false){
-    showAuthInlineError('This account is inactive. Ask an admin to activate it.');
+    showAuthInlineError('Inactive account. Ask an admin to activate it.');
     return;
   }
-  if(!u.salt || !u.passwordHash){
+  const hashT = String(u.passwordHash || '').trim();
+  const saltT = String(u.salt || '').trim();
+  if(!saltT || !hashT){
     showAuthInlineError('This account has no password set. Ask an admin to set a password.');
     return;
   }
-  if(simplePwdHash(password, u.salt) !== u.passwordHash){
-    showAuthInlineError('Incorrect password. Try again.');
+  if(/^\$2[aby]\$/.test(hashT)){
+    showAuthInlineError('This account uses a legacy password format. Ask an admin to set a new password in Users.');
+    return;
+  }
+  if(!verifyStoredPasswordMatches(password, u)){
+    showAuthInlineError('Wrong password. Check caps lock and extra spaces, then try again.');
     return;
   }
   if(u.role === 'leader' && (u.leaderId == null || !db.leaders.some(l => l.id === u.leaderId))){
@@ -813,7 +876,7 @@ function saveUser(){
     }
     if(password){
       u.salt = randomSalt();
-      u.passwordHash = simplePwdHash(password, u.salt);
+      u.passwordHash = computePasswordHashForStorage(password, u.salt);
     }
     u.displayName = displayName;
     u.role = role;
@@ -847,7 +910,7 @@ function saveUser(){
       displayName,
       role,
       salt,
-      passwordHash: simplePwdHash(password, salt),
+      passwordHash: computePasswordHashForStorage(password, salt),
       leaderId: role === 'leader' ? leaderPick : null,
       active: true,
       createdAt: new Date().toISOString(),
