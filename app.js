@@ -240,13 +240,22 @@ function randomSalt(){
   }
 }
 
+/** Same rules as stored usernames: lowercase, a–z / 0–9 / . _ - only, max 64 chars. */
+function normalizeUsername(raw){
+  return String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, '')
+    .slice(0, 64);
+}
+
 function ensureUserShape(u){
   if(!u || typeof u !== 'object') return null;
   const id = parseInt(u.id, 10);
   if(!Number.isFinite(id) || id < 1) return null;
   const role = ['admin', 'supervisor', 'leader'].includes(u.role) ? u.role : 'leader';
   const lid = u.leaderId != null && u.leaderId !== '' ? parseInt(u.leaderId, 10) : null;
-  const uname = String(u.username || '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '').slice(0, 64);
+  const uname = normalizeUsername(u.username);
   if(!uname) return null;
   return {
     id,
@@ -563,16 +572,24 @@ function performLogin(){
   clearAuthInlineError();
   const userEl = document.getElementById('auth-username');
   const passEl = document.getElementById('auth-password');
-  const username = (userEl && userEl.value || '').trim().toLowerCase();
+  const username = normalizeUsername(userEl && userEl.value);
   const password = passEl ? passEl.value : '';
   console.log('[AirportOps] username/password values read', { username: username || '(empty)', passwordLen: password.length });
   if(!username || !password){
     showAuthInlineError('Enter username and password.');
     return;
   }
-  const u = db.users.find(x => x.username === username && x.active !== false);
-  if(!u || !u.salt || !u.passwordHash){
-    showAuthInlineError('Unknown username or inactive account.');
+  const u = db.users.find(x => x.username === username);
+  if(!u){
+    showAuthInlineError('Unknown username. Use the same login name as in Users (letters, numbers, . _ - only).');
+    return;
+  }
+  if(u.active === false){
+    showAuthInlineError('This account is inactive. Ask an admin to activate it.');
+    return;
+  }
+  if(!u.salt || !u.passwordHash){
+    showAuthInlineError('This account has no password set. Ask an admin to set a password.');
     return;
   }
   if(simplePwdHash(password, u.salt) !== u.passwordHash){
@@ -730,8 +747,12 @@ function saveUser(){
     }
     toast('User updated', 'ok');
   } else {
-    const username = document.getElementById('u-username').value.trim().toLowerCase().replace(/[^a-z0-9._-]/g, '').slice(0, 64);
-    if(!username){ toast('Username is required', 'err'); return; }
+    const rawUsername = document.getElementById('u-username').value;
+    const username = normalizeUsername(rawUsername);
+    if(!username){
+      toast('Username must use letters, numbers, dots, underscores, or hyphens only (e.g. john.smith).', 'err');
+      return;
+    }
     if(db.users.some(x => x.username === username)){ toast('That username is already taken', 'err'); return; }
     if(!password){ toast('Set an initial password for new users', 'err'); return; }
     const salt = randomSalt();
@@ -743,11 +764,13 @@ function saveUser(){
       salt,
       passwordHash: simplePwdHash(password, salt),
       leaderId: role === 'leader' ? leaderPick : null,
-      active,
+      active: true,
       createdAt: new Date().toISOString(),
     };
     db.users.push(nu);
-    toast('User created', 'ok');
+    const authUserEl = document.getElementById('auth-username');
+    if(authUserEl) authUserEl.value = username;
+    toast(`User created — sign in as "${username}" with the password you set.`, 'ok');
   }
   save();
   closeModal('user-overlay');
