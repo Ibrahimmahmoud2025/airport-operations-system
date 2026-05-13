@@ -1,0 +1,7 @@
+{
+  "name": "logistics-system",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build-runtime-config.cjs"
+  }
+}

@@ -4,6 +4,8 @@
 console.log('[AirportOps] app.js loaded');
 const DB_KEY = 'airportOpsV2';
 const SESSION_KEY = 'airportOpsSessionUserId';
+/** Set when Supabase Auth session is active (same tab sessionStorage). */
+const REMOTE_SESSION_FLAG = 'logisticsRemoteAuth';
 let db = load();
 /** @type {{id:number,username:string,displayName:string,role:string,leaderId:number|null}|null} */
 let currentUser = null;
@@ -302,6 +304,81 @@ function normalizeUsername(raw){
     .slice(0, 64);
 }
 
+// ─── Supabase Auth + DATA_SOURCE (local | remote) — data still in localStorage until orders migrate ───
+
+function getRuntime(){
+  if(typeof window !== 'undefined' && window.LOGISTICS_RUNTIME && typeof window.LOGISTICS_RUNTIME === 'object'){
+    return window.LOGISTICS_RUNTIME;
+  }
+  return {
+    DATA_SOURCE: 'local',
+    SUPABASE_URL: '',
+    SUPABASE_ANON_KEY: '',
+    AUTH_EMAIL_SUFFIX: '@users.logistics.local',
+  };
+}
+
+function dataSourceIsRemote(){
+  try{
+    const o = localStorage.getItem('LOGISTICS_DATA_SOURCE');
+    if(o === 'local' || o === 'remote') return o === 'remote';
+  } catch(_e){}
+  return String(getRuntime().DATA_SOURCE || 'local').toLowerCase() === 'remote';
+}
+
+function supabaseClientReady(){
+  if(!dataSourceIsRemote()) return false;
+  const r = getRuntime();
+  return !!(
+    r.SUPABASE_URL && r.SUPABASE_ANON_KEY
+    && typeof window !== 'undefined'
+    && window.supabase
+    && typeof window.supabase.createClient === 'function'
+  );
+}
+
+let supabaseClient = null;
+function getSupabase(){
+  if(!supabaseClientReady()) return null;
+  if(!supabaseClient){
+    const r = getRuntime();
+    supabaseClient = window.supabase.createClient(r.SUPABASE_URL, r.SUPABASE_ANON_KEY, {
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+    });
+  }
+  return supabaseClient;
+}
+
+function authEmailForUsername(username){
+  const suf = String(getRuntime().AUTH_EMAIL_SUFFIX || '@users.logistics.local');
+  return normalizeUsername(username) + suf;
+}
+
+function applyRemoteProfileToCurrentUser(profileRow, opts){
+  const silent = !!(opts && opts.silent);
+  const fail = (msg)=>{ if(!silent) showAuthInlineError(msg); return false; };
+  if(!profileRow) return fail('Could not load your profile. Try again.');
+  if(profileRow.active === false) return fail('Inactive account. Ask an admin to activate it.');
+  const un = normalizeUsername(profileRow.username || '');
+  const lu = db.users.find(x => x.username === un);
+  if(!lu) return fail('This online account does not match any username in this browser’s Users list. Add the same username under Users, or set DATA_SOURCE to local.');
+  if(lu.active === false) return fail('Inactive account. Ask an admin to activate it.');
+  const pr = String(profileRow.role || '');
+  const role = ['admin', 'supervisor', 'leader'].includes(pr) ? pr : lu.role;
+  if(role === 'leader' && (lu.leaderId == null || !db.leaders.some(l => l.id === lu.leaderId))){
+    return fail('This tour leader login is not linked to a roster profile. Ask an admin.');
+  }
+  currentUser = {
+    id: lu.id,
+    username: lu.username,
+    displayName: (profileRow.display_name && String(profileRow.display_name).trim()) || lu.displayName,
+    role,
+    leaderId: lu.leaderId != null ? lu.leaderId : null,
+  };
+  sessionStorage.setItem(REMOTE_SESSION_FLAG, '1');
+  return true;
+}
+
 function ensureUserShape(u){
   if(!u || typeof u !== 'object') return null;
   const id = parseInt(u.id, 10);
@@ -538,15 +615,15 @@ function setAuthGateLocked(locked){
   if(gate) gate.setAttribute('aria-hidden', locked ? 'false' : 'true');
 }
 
-/** Keeps `<html data-auth-hydrate>` aligned with `sessionStorage` (`airportOpsSessionUserId`). */
+/** Keeps `<html data-auth-hydrate>` aligned with local session id and/or Supabase remote flag. */
 function syncDocumentAuthHydrate(){
   try{
     const raw = sessionStorage.getItem(SESSION_KEY);
     const sid = raw != null && raw !== '' ? parseInt(raw, 10) : NaN;
-    document.documentElement.setAttribute(
-      'data-auth-hydrate',
-      Number.isFinite(sid) ? 'authenticated' : 'guest'
-    );
+    const remote = sessionStorage.getItem(REMOTE_SESSION_FLAG) === '1';
+    const authedLocal = Number.isFinite(sid) && sid > 0;
+    const authed = authedLocal || (remote && !!currentUser);
+    document.documentElement.setAttribute('data-auth-hydrate', authed ? 'authenticated' : 'guest');
   } catch(e){
     document.documentElement.setAttribute('data-auth-hydrate', 'guest');
   }
@@ -584,8 +661,7 @@ function sessionUserIdFromStorage(){
   return Number.isFinite(id) ? id : null;
 }
 
-function tryRestoreSession(){
-  currentUser = null;
+function tryRestoreSessionLocal(){
   const sid = sessionUserIdFromStorage();
   if(sid == null) return false;
   const u = db.users.find(x => x.id === sid && x.active !== false);
@@ -604,7 +680,38 @@ function tryRestoreSession(){
     role: u.role,
     leaderId: u.leaderId != null ? u.leaderId : null,
   };
+  sessionStorage.removeItem(REMOTE_SESSION_FLAG);
   return true;
+}
+
+async function tryRestoreSessionAsync(){
+  currentUser = null;
+  if(supabaseClientReady()){
+    try{
+      const sb = getSupabase();
+      const { data: { session }, error } = await sb.auth.getSession();
+      if(error) console.warn('[RemoteAuth] getSession', error);
+      if(session && session.user){
+        const { data: profile, error: pe } = await sb
+          .from('profiles')
+          .select('username,display_name,role,leader_id,active')
+          .eq('user_id', session.user.id)
+          .maybeSingle();
+        if(pe) console.warn('[RemoteAuth] profile fetch', pe);
+        if(profile && applyRemoteProfileToCurrentUser(profile, { silent: true })){
+          sessionStorage.removeItem(SESSION_KEY);
+          sessionStorage.setItem(REMOTE_SESSION_FLAG, '1');
+          return true;
+        }
+        try{ await sb.auth.signOut(); } catch(_e){}
+      }
+      sessionStorage.removeItem(REMOTE_SESSION_FLAG);
+    } catch(e){
+      console.warn('[RemoteAuth] restore', e);
+      sessionStorage.removeItem(REMOTE_SESSION_FLAG);
+    }
+  }
+  return tryRestoreSessionLocal();
 }
 
 function clearAuthForm(){
@@ -700,7 +807,7 @@ function wireUserLoginUsernamePreview(){
   el.addEventListener('change', updateUserLoginUsernamePreview);
 }
 
-function performLogin(){
+async function performLogin(){
   clearAuthInlineError();
   const userEl = document.getElementById('auth-username');
   const passEl = document.getElementById('auth-password');
@@ -712,6 +819,60 @@ function performLogin(){
     showAuthInlineError('Enter username and password.');
     return;
   }
+
+  if(supabaseClientReady()){
+    const uPre = db.users.find(x => x.username === username);
+    if(!uPre){
+      showAuthInlineError('Unknown username (no matching row in Users on this device).');
+      return;
+    }
+    if(uPre.active === false){
+      showAuthInlineError('Inactive account. Ask an admin to activate it.');
+      return;
+    }
+    setAuthSubmitBusy(true);
+    try{
+      const sb = getSupabase();
+      const email = authEmailForUsername(username);
+      const { data: authData, error: authErr } = await sb.auth.signInWithPassword({ email, password });
+      if(authErr || !authData.session){
+        showAuthInlineError(authErr && authErr.message ? authErr.message : 'Online sign-in failed.');
+        return;
+      }
+      const uid = authData.session.user.id;
+      const { data: profile, error: pe } = await sb
+        .from('profiles')
+        .select('username,display_name,role,leader_id,active')
+        .eq('user_id', uid)
+        .maybeSingle();
+      if(pe){
+        console.warn('[RemoteAuth] profile fetch', pe);
+        showAuthInlineError('Could not load profile from server.');
+        await sb.auth.signOut();
+        return;
+      }
+      if(!applyRemoteProfileToCurrentUser(profile)){
+        await sb.auth.signOut();
+        sessionStorage.removeItem(REMOTE_SESSION_FLAG);
+        return;
+      }
+      sessionStorage.removeItem(SESSION_KEY);
+      sessionStorage.setItem(REMOTE_SESSION_FLAG, '1');
+      console.log('[UserAuth] remote login success', { username: currentUser.username, userId: currentUser.id });
+      clearAuthForm();
+      clearAuthInlineError();
+      startLoggedInApp({ fromLogin: true });
+    } finally{
+      setAuthSubmitBusy(false);
+    }
+    return;
+  }
+
+  if(dataSourceIsRemote() && !supabaseClientReady()){
+    showAuthInlineError('Remote mode is on but Supabase is not configured. Set Vercel env vars or use localStorage LOGISTICS_DATA_SOURCE=local.');
+    return;
+  }
+
   const u = db.users.find(x => x.username === username);
   console.log('[UserAuth] login lookup', {
     normalizedLookupUsername: username,
@@ -746,6 +907,7 @@ function performLogin(){
   }
   setAuthSubmitBusy(true);
   try{
+    sessionStorage.removeItem(REMOTE_SESSION_FLAG);
     sessionStorage.setItem(SESSION_KEY, String(u.id));
     console.log('[UserAuth] login success', { storedUsername: u.username, userId: u.id });
     currentUser = {
@@ -768,10 +930,22 @@ function submitAuthLogin(ev){
     ev.preventDefault();
   }
   console.log('[AirportOps] login submit triggered');
-  performLogin();
+  void performLogin().catch(err=>{
+    console.error('[UserAuth] login', err);
+    setAuthSubmitBusy(false);
+    showAuthInlineError('Sign-in failed. Try again.');
+  });
 }
 
-function logout(){
+async function logout(){
+  if(supabaseClientReady()){
+    try{
+      await getSupabase().auth.signOut();
+    } catch(e){
+      console.warn('[RemoteAuth] signOut', e);
+    }
+  }
+  sessionStorage.removeItem(REMOTE_SESSION_FLAG);
   sessionStorage.removeItem(SESSION_KEY);
   syncDocumentAuthHydrate();
   currentUser = null;
@@ -1427,37 +1601,40 @@ function importDataBackup(ev){
   if(!f) return;
   const reader = new FileReader();
   reader.onload = ()=>{
-    try{
-      const parsed = JSON.parse(reader.result);
-      const raw = parsed && typeof parsed === 'object' && parsed.data && typeof parsed.data === 'object'
-        ? parsed.data
-        : parsed;
-      if(!raw || typeof raw !== 'object') throw new Error('Invalid backup file');
-      if(!Array.isArray(raw.orders)) raw.orders = [];
-      if(!Array.isArray(raw.leaders)) raw.leaders = [];
-      if(!Array.isArray(raw.services)) raw.services = [];
-      if(!raw.orders.length && !raw.leaders.length && !raw.services.length) throw new Error('Backup is empty');
-      if(!confirm('Replace ALL current data with this backup? Export first if you need a copy. This cannot be undone.')) return;
-      closeAllOverlays();
-      flushSearchDebounceTimers();
-      db = applyMigrationsToDb(JSON.parse(JSON.stringify(raw)));
-      syncLeaderStatusesFromSchedule(true);
-      save();
-      refreshAppAfterDataChange();
-      if(!tryRestoreSession()){
-        sessionStorage.removeItem(SESSION_KEY);
-        currentUser = null;
-        appShellWired = false;
-        setAuthGateLocked(true);
-        applyRoleToUi();
-        toast('Backup restored. Sign in again with an account from this file.', 'info');
-      } else {
-        applyRoleToUi();
-        toast('Backup restored. All views refreshed.', 'ok');
+    void (async ()=>{
+      try{
+        const parsed = JSON.parse(reader.result);
+        const raw = parsed && typeof parsed === 'object' && parsed.data && typeof parsed.data === 'object'
+          ? parsed.data
+          : parsed;
+        if(!raw || typeof raw !== 'object') throw new Error('Invalid backup file');
+        if(!Array.isArray(raw.orders)) raw.orders = [];
+        if(!Array.isArray(raw.leaders)) raw.leaders = [];
+        if(!Array.isArray(raw.services)) raw.services = [];
+        if(!raw.orders.length && !raw.leaders.length && !raw.services.length) throw new Error('Backup is empty');
+        if(!confirm('Replace ALL current data with this backup? Export first if you need a copy. This cannot be undone.')) return;
+        closeAllOverlays();
+        flushSearchDebounceTimers();
+        db = applyMigrationsToDb(JSON.parse(JSON.stringify(raw)));
+        syncLeaderStatusesFromSchedule(true);
+        save();
+        refreshAppAfterDataChange();
+        if(!await tryRestoreSessionAsync()){
+          sessionStorage.removeItem(SESSION_KEY);
+          sessionStorage.removeItem(REMOTE_SESSION_FLAG);
+          currentUser = null;
+          appShellWired = false;
+          setAuthGateLocked(true);
+          applyRoleToUi();
+          toast('Backup restored. Sign in again with an account from this file.', 'info');
+        } else {
+          applyRoleToUi();
+          toast('Backup restored. All views refreshed.', 'ok');
+        }
+      } catch(err){
+        toast('Restore failed: ' + (err && err.message ? err.message : 'invalid JSON'), 'err');
       }
-    } catch(err){
-      toast('Restore failed: ' + (err && err.message ? err.message : 'invalid JSON'), 'err');
-    }
+    })();
   };
   reader.onerror = ()=> toast('Could not read the file.', 'err');
   reader.readAsText(f);
@@ -4977,16 +5154,26 @@ function init(){
   wireUserLoginUsernamePreview();
   initModalAccessibility();
   syncThemeToggleUi();
-  if(tryRestoreSession()){
-    startLoggedInApp();
-  } else {
-    setAuthGateLocked(true);
-    applyRoleToUi();
-    syncDocumentAuthHydrate();
-    const userEl = document.getElementById('auth-username');
-    if(userEl) queueMicrotask(() => { try{ userEl.focus(); }catch(e){} });
-  }
-  markAuthBootComplete();
+  void (async ()=>{
+    try{
+      if(await tryRestoreSessionAsync()){
+        startLoggedInApp();
+      } else {
+        setAuthGateLocked(true);
+        applyRoleToUi();
+        syncDocumentAuthHydrate();
+        const userEl = document.getElementById('auth-username');
+        if(userEl) queueMicrotask(() => { try{ userEl.focus(); } catch(e){} });
+      }
+    } catch(err){
+      console.error('[AirportOps] init auth', err);
+      setAuthGateLocked(true);
+      applyRoleToUi();
+      syncDocumentAuthHydrate();
+    } finally {
+      markAuthBootComplete();
+    }
+  })();
 }
 
 init();

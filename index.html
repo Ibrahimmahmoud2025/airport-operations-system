@@ -19,7 +19,9 @@
     document.documentElement.setAttribute('data-theme', t);
     var sraw = sessionStorage.getItem('airportOpsSessionUserId');
     var sid = parseInt(sraw, 10);
-    document.documentElement.setAttribute('data-auth-hydrate', Number.isFinite(sid) ? 'pending' : 'guest');
+    var remotePending = false;
+    try{ remotePending = sessionStorage.getItem('logisticsRemoteAuth') === '1'; }catch(e2){}
+    document.documentElement.setAttribute('data-auth-hydrate', (Number.isFinite(sid) || remotePending) ? 'pending' : 'guest');
   }catch(e){
     document.documentElement.setAttribute('data-theme','dark');
     document.documentElement.setAttribute('data-auth-hydrate','guest');
@@ -1105,6 +1107,8 @@
 </div>
 
 <div id="toasts" role="status" aria-live="polite" aria-relevant="additions"></div>
+<script src="public-config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.1/dist/umd/supabase.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="app.js" defer></script>
 </body>
