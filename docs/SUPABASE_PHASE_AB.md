@@ -88,6 +88,8 @@ When `DATA_SOURCE=remote` and the browser has Supabase configured, creating a us
 - **Why not an Edge Function:** keeps one deploy surface (Vercel), uses the official JS client, and avoids duplicating CORS/auth wiring for this static app.
 - **After create:** the app still writes a **local `db.users` row** (with `supabaseUserId`) for mapping to orders; then it **reloads profiles** from Supabase and merges into the list.
 
+**Edit / activate:** **`POST /api/update-user`** (same env and admin check) updates `profiles` and Auth metadata/password for users that have a **`supabaseUserId`** link. Rows without that link remain local-only.
+
 If `public.leaders` has no row for the chosen **legacy** leader id, the Auth user is still created but `profiles.leader_id` may stay null until leaders are synced to Postgres; the UI shows an informational toast in that case.
 
 ## 9. Testing checklist
@@ -97,6 +99,7 @@ If `public.leaders` has no row for the chosen **legacy** leader id, the Auth use
 3. **Remote:** create Supabase user + profile row; ensure same username under **Users** in the app; sign in with Supabase password — data still from `localStorage`.
 4. **Logout:** clears Supabase session and `logisticsRemoteAuth` session flag.
 5. **Remote “Add user”:** set Vercel env vars for the API; sign in as admin (remote); add user with password; confirm row in **Authentication → Users** and **profiles**; confirm Users table refreshes.
+6. **Remote edit user:** change display name or role for a user with `supabaseUserId`; confirm **Table editor → profiles** (and Auth metadata) updates.
 
 ## 10. Security notes
 

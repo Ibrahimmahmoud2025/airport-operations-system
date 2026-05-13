@@ -471,6 +471,26 @@ async function createRemoteAppUserViaApi(payload){
   return json;
 }
 
+async function updateRemoteAppUserViaApi(payload){
+  const sb = getSupabase();
+  const { data: sessWrap, error: sErr } = await sb.auth.getSession();
+  if(sErr) console.warn('[RemoteUsers] session', sErr);
+  const session = sessWrap && sessWrap.session;
+  if(!session) throw new Error('Your session expired. Sign in again.');
+  const origin = typeof location !== 'undefined' ? location.origin : '';
+  const res = await fetch(`${origin}/api/update-user`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+  const json = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
+  return json;
+}
+
 function ensureUserShape(u){
   if(!u || typeof u !== 'object') return null;
   const id = parseInt(u.id, 10);
@@ -1144,14 +1164,42 @@ async function saveUser(){
       toast('Keep at least one active admin account', 'err');
       return;
     }
-    if(password){
-      u.salt = randomSalt();
-      u.passwordHash = computePasswordHashForStorage(password, u.salt);
+    if(supabaseClientReady() && u.supabaseUserId){
+      try{
+        const json = await updateRemoteAppUserViaApi({
+          targetSupabaseUserId: u.supabaseUserId,
+          displayName,
+          role,
+          active,
+          password: password || undefined,
+          leaderLegacyId: role === 'leader' ? leaderPick : null,
+        });
+        u.displayName = displayName;
+        u.role = role;
+        u.leaderId = role === 'leader' ? leaderPick : null;
+        u.active = active;
+        save();
+        await refreshUsersFromSupabaseProfiles();
+        if(!json.leaderRemoteLinked && role === 'leader'){
+          toast('Saved on server — leader UUID stays unset until leaders exist in Supabase.', 'info');
+        } else {
+          toast('User updated on server', 'ok');
+        }
+      } catch(err){
+        toast(err && err.message ? err.message : 'Could not save changes on server', 'err');
+        return;
+      }
+    } else {
+      if(password){
+        u.salt = randomSalt();
+        u.passwordHash = computePasswordHashForStorage(password, u.salt);
+      }
+      u.displayName = displayName;
+      u.role = role;
+      u.leaderId = role === 'leader' ? leaderPick : null;
+      u.active = active;
+      toast('User updated', 'ok');
     }
-    u.displayName = displayName;
-    u.role = role;
-    u.leaderId = role === 'leader' ? leaderPick : null;
-    u.active = active;
     if(u.id === currentUser.id && currentUser){
       currentUser = {
         id: u.id,
@@ -1162,7 +1210,6 @@ async function saveUser(){
       };
       applyRoleToUi();
     }
-    toast('User updated', 'ok');
   } else {
     const rawUsername = document.getElementById('u-username').value;
     const username = normalizeUsername(rawUsername);
@@ -1285,6 +1332,13 @@ function saveUserFromModal(){
 }
 
 function toggleUserActive(id){
+  void toggleUserActiveAsync(id).catch(err=>{
+    console.error('[RemoteUsers] toggleUserActive', err);
+    toast(err && err.message ? err.message : 'Update failed', 'err');
+  });
+}
+
+async function toggleUserActiveAsync(id){
   if(!canManageUsers()) return;
   const u = db.users.find(x => x.id === id);
   if(!u) return;
@@ -1297,8 +1351,25 @@ function toggleUserActive(id){
     const others = db.users.filter(x => x.id !== u.id && x.role === 'admin' && x.active !== false);
     if(!others.length){ toast('Cannot deactivate the last admin', 'err'); return; }
   }
+  if(supabaseClientReady() && u.supabaseUserId){
+    try{
+      await updateRemoteAppUserViaApi({
+        targetSupabaseUserId: u.supabaseUserId,
+        displayName: u.displayName,
+        role: u.role,
+        active: next,
+        leaderLegacyId: u.role === 'leader' ? u.leaderId : null,
+      });
+    } catch(err){
+      toast(err && err.message ? err.message : 'Could not update account on server', 'err');
+      return;
+    }
+  }
   u.active = next;
   save();
+  if(supabaseClientReady() && u.supabaseUserId){
+    await refreshUsersFromSupabaseProfiles();
+  }
   renderUsers(false);
   toast(next ? 'Account activated' : 'Account deactivated', 'ok');
 }
